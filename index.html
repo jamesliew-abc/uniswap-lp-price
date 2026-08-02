@@ -247,21 +247,33 @@
     <div class="container">
         <div class="header">
             <h1>📊 Uniswap V4 Pool Data Viewer</h1>
-            <p>Query and visualize pool exchange rates for THBT / USDT</p>
+            <p>Query and visualize pool exchange rates for THBT / USDT, USDC, EURC, AUDD, XSGD</p>
         </div>
-        
+
         <div class="config-section">
             <div class="form-group">
                 <label>The Graph API Endpoint</label>
-                <input type="text" id="apiEndpoint" placeholder="https://gateway.thegraph.com/api/[api-key]/subgraphs/id/[subgraph-id]">
+                <input type="text" id="apiEndpoint" value="https://gateway.thegraph.com/api/[api-key]/subgraphs/id/0xa4eb169211959a907eda26be61b9e977b6ed13a3">
                 <div class="info-box" style="margin-top: 10px; font-size: 13px;">
-                    <strong>Setup:</strong> Get your API key from <a href="https://thegraph.com/studio/apikeys/" target="_blank">The Graph Studio</a> and replace [api-key] with your key and [subgraph-id] with your subgraph ID
+                    <strong>Setup:</strong> Get your API key from <a href="https://thegraph.com/studio/apikeys/" target="_blank">The Graph Studio</a> and replace [api-key] with your key. The Uniswap subgraph ID (<code>0xa4eb169211959a907eda26be61b9e977b6ed13a3</code>) is already filled in.
                 </div>
             </div>
-            
+
             <div class="form-group">
-                <label>Pool Address</label>
-                <input type="text" id="poolAddress" value="0x3da79843327149af53442ae52df94f316d5f6ab38618694f4d2913f578ec8af7">
+                <label>Pool</label>
+                <select id="poolSelect" onchange="onPoolChange()">
+                    <option value="0xf24771172649b8840fba253fea6d41db0fb5cfefaffac6c9035e866b9e75083e" data-symbol="USDT">THBT / USDT</option>
+                    <option value="0xaa1f9fa78b71784ba98f633661c268116e14318ba24272fd923a172fd8adf814" data-symbol="USDC">THBT / USDC</option>
+                    <option value="0x68e22c98bb81fe3c9a34679bd2133b9808ba4486ccdcf48dcf011764aecaaa17" data-symbol="EURC">THBT / EURC</option>
+                    <option value="0x5d0ebfd517e26be6d24e79ab244e31398ee822c190ea88eb3d517be33be8cc25" data-symbol="AUDD">THBT / AUDD</option>
+                    <option value="0xc1266073b10b0b3451ea052881a4be44d99c1d917db8088994babb3f0ce153f1" data-symbol="XSGD">THBT / XSGD</option>
+                    <option value="" data-symbol="">Custom pool address&hellip;</option>
+                </select>
+            </div>
+
+            <div class="form-group" id="customPoolGroup" style="display: none;">
+                <label>Custom Pool Address</label>
+                <input type="text" id="poolAddress" placeholder="0x...">
             </div>
             
             <div class="row">
@@ -299,13 +311,13 @@
             <div id="tableStatus"></div>
             <div class="table-container">
                 <table id="dataTable" style="display: none;">
-                    <thead>
+                    <thead id="tableHead">
                         <tr>
                             <th>Date</th>
-                            <th>USDT/THBT rate</th>
-                            <th>THBT/USDT rate</th>
-                            <th>Volume USDT -> THBT</th>
-                            <th>Volume THBT -> USDT</th>
+                            <th id="th0">USDT/THBT rate</th>
+                            <th id="th1">THBT/USDT rate</th>
+                            <th id="th2">Volume USDT -> THBT</th>
+                            <th id="th3">Volume THBT -> USDT</th>
                         </tr>
                     </thead>
                     <tbody id="tableBody"></tbody>
@@ -322,10 +334,39 @@
     <script>
         // Set today's date as default end date
         document.getElementById('endDate').valueAsDate = new Date();
+        updateTableHeaders(getSelectedSymbol());
         
         // Store data globally for export
         let currentData = null;
-        
+
+        function getSelectedSymbol() {
+            const select = document.getElementById('poolSelect');
+            const option = select.options[select.selectedIndex];
+            return option.dataset.symbol || 'TOKEN';
+        }
+
+        function getPoolAddress() {
+            const select = document.getElementById('poolSelect');
+            if (select.value === '') {
+                return document.getElementById('poolAddress').value.trim();
+            }
+            return select.value;
+        }
+
+        function onPoolChange() {
+            const select = document.getElementById('poolSelect');
+            const customGroup = document.getElementById('customPoolGroup');
+            customGroup.style.display = select.value === '' ? 'block' : 'none';
+            updateTableHeaders(getSelectedSymbol());
+        }
+
+        function updateTableHeaders(symbol) {
+            document.getElementById('th0').textContent = `${symbol}/THBT rate`;
+            document.getElementById('th1').textContent = `THBT/${symbol} rate`;
+            document.getElementById('th2').textContent = `Volume ${symbol} -> THBT`;
+            document.getElementById('th3').textContent = `Volume THBT -> ${symbol}`;
+        }
+
         function switchTab(tab) {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.content-section').forEach(s => s.classList.remove('active'));
@@ -358,7 +399,7 @@
         
         async function executeQuery() {
             const endpoint = document.getElementById('apiEndpoint').value.trim();
-            const poolAddress = document.getElementById('poolAddress').value.trim();
+            const poolAddress = getPoolAddress();
             const startDate = document.getElementById('startDate').value;
             const endDate = document.getElementById('endDate').value;
             const maxResults = parseInt(document.getElementById('maxResults').value);
@@ -495,7 +536,8 @@
             }
             
             // Create CSV header
-            const headers = ['Date', 'USDT/THBT rate', 'THBT/USDT rate', 'Volume USDT -> THBT', 'Volume THBT -> USDT', 'ID'];
+            const symbol = getSelectedSymbol();
+            const headers = ['Date', `${symbol}/THBT rate`, `THBT/${symbol} rate`, `Volume ${symbol} -> THBT`, `Volume THBT -> ${symbol}`, 'ID'];
             
             // Create CSV rows
             const rows = currentData.map(row => [
@@ -526,10 +568,9 @@
             const url = URL.createObjectURL(blob);
             
             // Generate filename with date range
-            const poolAddr = document.getElementById('poolAddress').value.substring(0, 10);
             const startDate = document.getElementById('startDate').value;
             const endDate = document.getElementById('endDate').value;
-            const filename = `uniswap_pool_${poolAddr}_${startDate}_to_${endDate}.csv`;
+            const filename = `uniswap_pool_THBT-${symbol}_${startDate}_to_${endDate}.csv`;
             
             link.setAttribute('href', url);
             link.setAttribute('download', filename);
