@@ -252,10 +252,14 @@
 
         <div class="config-section">
             <div class="form-group">
-                <label>The Graph API Endpoint</label>
-                <input type="text" id="apiEndpoint" value="https://gateway.thegraph.com/api/[api-key]/subgraphs/id/0xa4eb169211959a907eda26be61b9e977b6ed13a3">
+                <label>The Graph API Key</label>
+                <input type="password" id="apiKey" placeholder="Paste your API key" autocomplete="off">
+                <label style="display: flex; align-items: center; gap: 8px; font-weight: 400; margin-top: 8px; color: #495057;">
+                    <input type="checkbox" id="rememberKey" style="width: auto;">
+                    Remember my API key on this device (saved only in this browser, never sent anywhere else)
+                </label>
                 <div class="info-box" style="margin-top: 10px; font-size: 13px;">
-                    <strong>Setup:</strong> Get your API key from <a href="https://thegraph.com/studio/apikeys/" target="_blank">The Graph Studio</a> and replace [api-key] with your key. The Uniswap subgraph ID (<code>0xa4eb169211959a907eda26be61b9e977b6ed13a3</code>) is already filled in.
+                    <strong>Setup:</strong> Get your API key from <a href="https://thegraph.com/studio/apikeys/" target="_blank">The Graph Studio</a> and paste it above. The Uniswap subgraph ID (<code>0xa4eb169211959a907eda26be61b9e977b6ed13a3</code>) is already built in &mdash; do not commit your API key into this file or any public repo.
                 </div>
             </div>
 
@@ -332,10 +336,40 @@
     </div>
     
     <script>
+        const SUBGRAPH_ID = '0xa4eb169211959a907eda26be61b9e977b6ed13a3';
+        const API_KEY_STORAGE_KEY = 'thegraph_api_key';
+
         // Set today's date as default end date
         document.getElementById('endDate').valueAsDate = new Date();
         updateTableHeaders(getSelectedSymbol());
-        
+
+        // Restore a remembered API key from this browser's local storage, if any
+        (function restoreApiKey() {
+            const savedKey = localStorage.getItem(API_KEY_STORAGE_KEY);
+            if (savedKey) {
+                document.getElementById('apiKey').value = savedKey;
+                document.getElementById('rememberKey').checked = true;
+            }
+        })();
+
+        document.getElementById('apiKey').addEventListener('input', persistApiKeyIfRemembered);
+        document.getElementById('rememberKey').addEventListener('change', persistApiKeyIfRemembered);
+
+        function persistApiKeyIfRemembered() {
+            const remember = document.getElementById('rememberKey').checked;
+            if (remember) {
+                localStorage.setItem(API_KEY_STORAGE_KEY, document.getElementById('apiKey').value.trim());
+            } else {
+                localStorage.removeItem(API_KEY_STORAGE_KEY);
+            }
+        }
+
+        function buildEndpoint() {
+            const apiKey = document.getElementById('apiKey').value.trim();
+            if (!apiKey) return '';
+            return `https://gateway.thegraph.com/api/${apiKey}/subgraphs/id/${SUBGRAPH_ID}`;
+        }
+
         // Store data globally for export
         let currentData = null;
 
@@ -398,15 +432,15 @@
         }
         
         async function executeQuery() {
-            const endpoint = document.getElementById('apiEndpoint').value.trim();
+            const endpoint = buildEndpoint();
             const poolAddress = getPoolAddress();
             const startDate = document.getElementById('startDate').value;
             const endDate = document.getElementById('endDate').value;
             const maxResults = parseInt(document.getElementById('maxResults').value);
-            
+
             // Validation
             if (!endpoint) {
-                showStatus('error', 'Please enter The Graph API endpoint');
+                showStatus('error', 'Please enter your The Graph API key');
                 return;
             }
             
