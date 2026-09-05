@@ -359,7 +359,7 @@
                 </label>
 
                 <div class="info-box" style="font-size: 13px; margin-bottom: 15px;">
-                    <strong>Note:</strong> This pulls the BOT Daily Average Exchange Rate (THB to USD/EUR/SGD/AUD) from the <a href="https://portal.api.bot.or.th/portal/catalogue-products/exchange-rates-1" target="_blank">Bank of Thailand API</a> for the selected month, and the daily THBT swap rates for every pair (using both the original and migrated pool IDs) from the Uniswap subgraph using the Graph API key entered above. The BOT App ID/Token fields are optional &mdash; leave them blank to generate the report with just the LP data. The &quot;Exchange to THB&quot; columns mirror the template layout but have no data source defined yet, so they are left blank. If the BOT request fails, check the request/header names against your app's docs in the BOT API portal &mdash; the exact header names weren't confirmable from here.
+                    <strong>Note:</strong> This pulls the BOT Daily Average Exchange Rate (THB to USD/EUR/SGD/AUD) from the <a href="https://portal.api.bot.or.th/portal/catalogue-products/exchange-rates-1" target="_blank">Bank of Thailand API</a> for the selected month, and the daily THBT swap rates for every pair (using both the original and migrated pool IDs) from the Uniswap subgraph using the Graph API key entered above. The BOT Token field is required for the BOT columns (App ID isn&#39;t used in the request, but the field is kept in case a future BOT endpoint needs it) &mdash; leave the token blank to generate the report with just the LP data. The &quot;Exchange to THB&quot; columns mirror the template layout but have no data source defined yet, so they are left blank.
                 </div>
 
                 <button id="monthlyBtn" onclick="generateMonthlyReport()">📅 Generate Monthly Report</button>
@@ -386,10 +386,10 @@
         // --- Monthly report config ---
         const BOT_APP_ID_STORAGE_KEY = 'bot_app_id';
         const BOT_TOKEN_STORAGE_KEY = 'bot_api_token';
-        // Best-effort endpoint/header names for the BOT "Average Exchange Rate - THB / Foreign Currency"
-        // API (DAILY_AVG_EXG_RATE). Adjust these if your app's docs in the BOT API portal specify
-        // different header names.
-        const BOT_API_BASE = 'https://apigw1.bot.or.th/bot/public/Stat-ExchangeRate/v2/DAILY_AVG_EXG_RATE';
+        // Confirmed against a working curl call: host is gateway.api.bot.or.th (not apigw1.bot.or.th),
+        // the currency query param is `currency` (not `currency_id`), and the token is sent as-is
+        // in the Authorization header with no "Bearer " prefix.
+        const BOT_API_BASE = 'https://gateway.api.bot.or.th/Stat-ExchangeRate/v2/DAILY_AVG_EXG_RATE';
         const BOT_CURRENCIES = [
             { label: 'USD', code: 'USD' },
             { label: 'EURO', code: 'EUR' },
@@ -787,13 +787,14 @@
         async function fetchBotRatesForCurrency(appId, token, start, end, currencyCode) {
             const startPeriod = dateKey(start);
             const endPeriod = dateKey(end);
-            const url = `${BOT_API_BASE}/?start_period=${startPeriod}&end_period=${endPeriod}&currency_id=${currencyCode}`;
+            const url = `${BOT_API_BASE}/?start_period=${startPeriod}&end_period=${endPeriod}&currency=${currencyCode}`;
 
+            // The App ID isn't part of this call (confirmed against a working curl example) --
+            // only the token, sent verbatim (no "Bearer " prefix) as Authorization.
             const response = await fetch(url, {
                 headers: {
-                    'accept': 'application/json',
-                    'X-IBM-Client-Id': appId,
-                    'Authorization': `Bearer ${token}`
+                    'Accept': '*/*',
+                    'Authorization': token
                 }
             });
             const rawText = await response.text();
@@ -924,7 +925,7 @@
             BOT_CURRENCIES.forEach(c => { botRateMap[c.label] = {}; });
             let botWarning = '';
 
-            if (botAppId && botToken) {
+            if (botToken) {
                 statusEl.innerHTML = monthlyStatusHtml('info', 'Fetching BOT exchange rates...');
                 try {
                     const { records, failed } = await fetchBotRates(botAppId, botToken, start, end);
