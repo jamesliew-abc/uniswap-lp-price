@@ -259,18 +259,16 @@
                     Remember my API key on this device (saved only in this browser, never sent anywhere else)
                 </label>
                 <div class="info-box" style="margin-top: 10px; font-size: 13px;">
-                    <strong>Setup:</strong> Get your API key from <a href="https://thegraph.com/studio/apikeys/" target="_blank">The Graph Studio</a> and paste it above. The Uniswap subgraph ID (<code>Gqm2b5J85n1bhCyDMpGbtbVn4935EvvdyHdHrx3dibyj</code>) is already built in &mdash; do not commit your API key into this file or any public repo.
+                    <strong>Setup:</strong> Get your API key from <a href="https://thegraph.com/studio/apikeys/" target="_blank">The Graph Studio</a> and paste it above. The Uniswap V4 Base subgraph ID (<code>Gqm2b5J85n1bhCyDMpGbtbVn4935EvvdyHdHrx3dibyj</code>) is already built in &mdash; do not commit your API key into this file or any public repo. Pool IDs below were verified against live Base pools on 2026-09-05; THBT/AUDD and THBT/XSGD pools could not be found on-chain, so they were removed from the list (use "Custom pool address" if you have a valid pool ID for them).
                 </div>
             </div>
 
             <div class="form-group">
                 <label>Pool</label>
                 <select id="poolSelect" onchange="onPoolChange()">
-                    <option value="0xf24771172649b8840fba253fea6d41db0fb5cfefaffac6c9035e866b9e75083e" data-symbol="USDT">THBT / USDT</option>
-                    <option value="0xaa1f9fa78b71784ba98f633661c268116e14318ba24272fd923a172fd8adf814" data-symbol="USDC">THBT / USDC</option>
-                    <option value="0x68e22c98bb81fe3c9a34679bd2133b9808ba4486ccdcf48dcf011764aecaaa17" data-symbol="EURC">THBT / EURC</option>
-                    <option value="0x5d0ebfd517e26be6d24e79ab244e31398ee822c190ea88eb3d517be33be8cc25" data-symbol="AUDD">THBT / AUDD</option>
-                    <option value="0xc1266073b10b0b3451ea052881a4be44d99c1d917db8088994babb3f0ce153f1" data-symbol="XSGD">THBT / XSGD</option>
+                    <option value="0x0109d8915c44d44c4e80e313a97a297355d94a392f601d3475db9fc3f3a3e347" data-symbol="USDT">THBT / USDT</option>
+                    <option value="0x2170196fcf22ae7562908846a4db93d25803a9d4f580307449931df296d01d4e" data-symbol="USDC">THBT / USDC</option>
+                    <option value="0xec1379158e435022021b830b9b0c46b6cdf6bedc397ffa0bd7e18877714ddc0e" data-symbol="EURC">THBT / EURC</option>
                     <option value="" data-symbol="">Custom pool address&hellip;</option>
                 </select>
             </div>
