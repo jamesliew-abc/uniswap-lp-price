@@ -358,8 +358,13 @@
                     Remember my BOT App ID/token on this device (saved only in this browser, never sent anywhere else)
                 </label>
 
+                <div class="form-group">
+                    <label>BOT Proxy URL (required &mdash; see note below)</label>
+                    <input type="text" id="botProxyUrl" placeholder="https://your-worker-name.your-subdomain.workers.dev" autocomplete="off">
+                </div>
+
                 <div class="info-box" style="font-size: 13px; margin-bottom: 15px;">
-                    <strong>Note:</strong> This pulls the BOT Daily Average Exchange Rate (THB to USD/EUR/SGD/AUD) from the <a href="https://portal.api.bot.or.th/portal/catalogue-products/exchange-rates-1" target="_blank">Bank of Thailand API</a> for the selected month, and the daily THBT swap rates for every pair (using both the original and migrated pool IDs) from the Uniswap subgraph using the Graph API key entered above. The BOT Token field is required for the BOT columns (App ID isn&#39;t used in the request, but the field is kept in case a future BOT endpoint needs it) &mdash; leave the token blank to generate the report with just the LP data. The &quot;Exchange to THB&quot; columns mirror the template layout but have no data source defined yet, so they are left blank.
+                    <strong>Note:</strong> gateway.api.bot.or.th doesn&#39;t send CORS headers, so a browser blocks calling it directly from this page (curl/Postman work fine because CORS is a browser-only restriction) &mdash; you'll get a generic "Failed to fetch" with no detail if you try without a proxy. Deploy the included <code>bot-proxy-worker.js</code> as a free <a href="https://workers.cloudflare.com/" target="_blank">Cloudflare Worker</a> (paste its contents into a new Worker in the Cloudflare dashboard and deploy &mdash; no CLI needed), then paste the resulting <code>*.workers.dev</code> URL above. The worker only forwards to this one BOT endpoint and only forwards the Authorization header it's given, so your token doesn't go anywhere it doesn't already go. This pulls the BOT Daily Average Exchange Rate (THB to USD/EUR/SGD/AUD) for the selected month, and the daily THBT swap rates for every pair (using both the original and migrated pool IDs) from the Uniswap subgraph using the Graph API key entered above. The BOT Token field is required for the BOT columns (App ID isn&#39;t used in the request, but the field is kept in case a future BOT endpoint needs it) &mdash; leave the token blank to generate the report with just the LP data. The &quot;Exchange to THB&quot; columns mirror the template layout but have no data source defined yet, so they are left blank.
                 </div>
 
                 <button id="monthlyBtn" onclick="generateMonthlyReport()">📅 Generate Monthly Report</button>
@@ -386,10 +391,7 @@
         // --- Monthly report config ---
         const BOT_APP_ID_STORAGE_KEY = 'bot_app_id';
         const BOT_TOKEN_STORAGE_KEY = 'bot_api_token';
-        // Confirmed against a working curl call: host is gateway.api.bot.or.th (not apigw1.bot.or.th),
-        // the currency query param is `currency` (not `currency_id`), and the token is sent as-is
-        // in the Authorization header with no "Bearer " prefix.
-        const BOT_API_BASE = 'https://gateway.api.bot.or.th/Stat-ExchangeRate/v2/DAILY_AVG_EXG_RATE';
+        const BOT_PROXY_URL_STORAGE_KEY = 'bot_proxy_url';
         const BOT_CURRENCIES = [
             { label: 'USD', code: 'USD' },
             { label: 'EURO', code: 'EUR' },
@@ -464,6 +466,15 @@
                 localStorage.removeItem(BOT_TOKEN_STORAGE_KEY);
             }
         }
+
+        // The proxy URL isn't a secret, so it's always remembered (no checkbox needed)
+        const savedProxyUrl = localStorage.getItem(BOT_PROXY_URL_STORAGE_KEY);
+        if (savedProxyUrl) {
+            document.getElementById('botProxyUrl').value = savedProxyUrl;
+        }
+        document.getElementById('botProxyUrl').addEventListener('input', () => {
+            localStorage.setItem(BOT_PROXY_URL_STORAGE_KEY, document.getElementById('botProxyUrl').value.trim());
+        });
 
         function buildEndpoint() {
             const apiKey = document.getElementById('apiKey').value.trim();
@@ -784,10 +795,20 @@
         // The BOT API only reliably returns data for one currency_id per request (confirmed by a
         // manual SGD-only query), so each currency is fetched separately and merged rather than
         // sent as a single comma-separated request.
+        function getBotApiBase() {
+            const proxyUrl = document.getElementById('botProxyUrl').value.trim().replace(/\/$/, '');
+            // gateway.api.bot.or.th has no CORS headers, so a direct browser call always fails with
+            // an opaque "Failed to fetch" -- routing through a same-shape proxy (see
+            // bot-proxy-worker.js) is required. Falls back to the direct (browser-unreachable) URL
+            // if no proxy is configured, so the resulting error is at least consistent.
+            const origin = proxyUrl || 'https://gateway.api.bot.or.th';
+            return `${origin}/Stat-ExchangeRate/v2/DAILY_AVG_EXG_RATE`;
+        }
+
         async function fetchBotRatesForCurrency(appId, token, start, end, currencyCode) {
             const startPeriod = dateKey(start);
             const endPeriod = dateKey(end);
-            const url = `${BOT_API_BASE}/?start_period=${startPeriod}&end_period=${endPeriod}&currency=${currencyCode}`;
+            const url = `${getBotApiBase()}/?start_period=${startPeriod}&end_period=${endPeriod}&currency=${currencyCode}`;
 
             // The App ID isn't part of this call (confirmed against a working curl example) --
             // only the token, sent verbatim (no "Bearer " prefix) as Authorization.
@@ -925,7 +946,10 @@
             BOT_CURRENCIES.forEach(c => { botRateMap[c.label] = {}; });
             let botWarning = '';
 
-            if (botToken) {
+            const botProxyUrl = document.getElementById('botProxyUrl').value.trim();
+            if (botToken && !botProxyUrl) {
+                botWarning = 'BOT rate lookup skipped: a BOT Proxy URL is required (gateway.api.bot.or.th blocks direct browser requests via CORS) -- see the note above to deploy one.';
+            } else if (botToken) {
                 statusEl.innerHTML = monthlyStatusHtml('info', 'Fetching BOT exchange rates...');
                 try {
                     const { records, failed } = await fetchBotRates(botAppId, botToken, start, end);
