@@ -853,6 +853,25 @@
             return map;
         }
 
+        // BOT doesn't publish rates on Saturday/Sunday, so weekends carry forward the most recent
+        // weekday's rate (i.e. Friday's, or the prior trading day if a public holiday fell on the
+        // Friday too). Since the report always re-queries the month fresh, this also naturally
+        // re-checks Saturday's (still-absent) data against Friday's each time the report is run.
+        function fillWeekendBotRates(map, days) {
+            BOT_CURRENCIES.forEach(c => {
+                let lastRate;
+                days.forEach(d => {
+                    const key = dateKey(d);
+                    const dow = d.getUTCDay(); // 0 = Sunday, 6 = Saturday
+                    if (map[c.label][key] !== undefined) {
+                        lastRate = map[c.label][key];
+                    } else if ((dow === 0 || dow === 6) && lastRate !== undefined) {
+                        map[c.label][key] = lastRate;
+                    }
+                });
+            });
+        }
+
         async function generateMonthlyReport() {
             const statusEl = document.getElementById('monthlyStatus');
             const btn = document.getElementById('monthlyBtn');
@@ -876,6 +895,11 @@
             const { start, end, daysInMonth } = getMonthRange(monthStr);
             const startTs = Math.floor(start.getTime() / 1000);
             const endTs = Math.floor(end.getTime() / 1000) + 86399;
+
+            const days = [];
+            for (let i = 0; i < daysInMonth; i++) {
+                days.push(new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1 + i)));
+            }
 
             const swapThbtTo = {}; // [symbol][dateKey] = THBT -> symbol rate
             const swapToThbt = {}; // [symbol][dateKey] = symbol -> THBT rate
@@ -905,17 +929,13 @@
                 try {
                     const { records, failed } = await fetchBotRates(botAppId, botToken, start, end);
                     botRateMap = extractBotRateMap(records);
+                    fillWeekendBotRates(botRateMap, days);
                     if (failed.length > 0) {
                         botWarning = `BOT rate lookup failed for: ${failed.join('; ')} (other currencies/LP data still populated)`;
                     }
                 } catch (err) {
                     botWarning = `BOT rate lookup failed (report still generated with LP data only): ${err.message}`;
                 }
-            }
-
-            const days = [];
-            for (let i = 0; i < daysInMonth; i++) {
-                days.push(new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1 + i)));
             }
 
             currentMonthlyReport = { monthStr, days, botRateMap, swapThbtTo, swapToThbt };
