@@ -659,9 +659,15 @@
         function orientPoolDayRow(row) {
             const token0Symbol = (row.pool && row.pool.token0 && row.pool.token0.symbol || '').toUpperCase();
             const isToken0Thbt = token0Symbol === 'THBT';
+            // Per the actual Uniswap v3/v4 subgraph mapping (sqrtPriceX96ToTokenPrices in
+            // common/pricing.ts), token1Price is the token0->token1 conversion rate and token0Price
+            // is the token1->token0 conversion rate -- i.e. each field is named after the token
+            // you're converting INTO, not the token whose "price" it is. So "THBT -> symbol" (small,
+            // ~0.03) is token1Price when THBT is token0, but token0Price when THBT is token1 -- the
+            // opposite of what the field names might suggest at a glance.
             return {
-                thbtPrice: parseFloat(isToken0Thbt ? row.token0Price : row.token1Price),
-                symbolPrice: parseFloat(isToken0Thbt ? row.token1Price : row.token0Price),
+                thbtPrice: parseFloat(isToken0Thbt ? row.token1Price : row.token0Price),
+                symbolPrice: parseFloat(isToken0Thbt ? row.token0Price : row.token1Price),
                 thbtVolume: row.volumeToken0 !== undefined ? parseFloat(isToken0Thbt ? row.volumeToken0 : row.volumeToken1) : undefined,
                 symbolVolume: row.volumeToken0 !== undefined ? parseFloat(isToken0Thbt ? row.volumeToken1 : row.volumeToken0) : undefined
             };
