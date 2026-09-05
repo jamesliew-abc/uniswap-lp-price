@@ -781,11 +781,13 @@
             return result.data.poolDayDatas || [];
         }
 
-        async function fetchBotRates(appId, token, start, end) {
+        // The BOT API only reliably returns data for one currency_id per request (confirmed by a
+        // manual SGD-only query), so each currency is fetched separately and merged rather than
+        // sent as a single comma-separated request.
+        async function fetchBotRatesForCurrency(appId, token, start, end, currencyCode) {
             const startPeriod = dateKey(start);
             const endPeriod = dateKey(end);
-            const currencyParam = BOT_CURRENCIES.map(c => c.code).join(',');
-            const url = `${BOT_API_BASE}/?start_period=${startPeriod}&end_period=${endPeriod}&currency_id=${currencyParam}`;
+            const url = `${BOT_API_BASE}/?start_period=${startPeriod}&end_period=${endPeriod}&currency_id=${currencyCode}`;
 
             const response = await fetch(url, {
                 headers: {
@@ -799,12 +801,32 @@
             try {
                 json = JSON.parse(rawText);
             } catch (e) {
-                throw new Error(`BOT API returned a non-JSON response (HTTP ${response.status}): ${rawText.slice(0, 200)}`);
+                throw new Error(`non-JSON response (HTTP ${response.status}): ${rawText.slice(0, 200)}`);
             }
             if (!response.ok) {
-                throw new Error(`BOT API HTTP ${response.status}: ${JSON.stringify(json).slice(0, 300)}`);
+                throw new Error(`HTTP ${response.status}: ${JSON.stringify(json).slice(0, 300)}`);
             }
             return json?.result?.data?.data_detail || json?.data?.data_detail || json?.data_detail || (Array.isArray(json) ? json : []);
+        }
+
+        // Fetches every currency in BOT_CURRENCIES, merges the successful ones, and reports which
+        // (if any) failed so a single bad currency code doesn't blank out the whole report.
+        async function fetchBotRates(appId, token, start, end) {
+            const results = await Promise.allSettled(
+                BOT_CURRENCIES.map(c => fetchBotRatesForCurrency(appId, token, start, end, c.code))
+            );
+
+            const records = [];
+            const failed = [];
+            results.forEach((res, i) => {
+                if (res.status === 'fulfilled') {
+                    records.push(...res.value);
+                } else {
+                    failed.push(`${BOT_CURRENCIES[i].label} (${res.reason.message})`);
+                }
+            });
+
+            return { records, failed };
         }
 
         function extractBotRateMap(records) {
@@ -819,6 +841,8 @@
                 const key = dateKey(d);
 
                 const ccy = rec.currency_id || rec.currency || rec.ccy;
+                // mid_rate is the value we want (confirmed against a real BOT response); the rest
+                // are fallbacks in case a currency's payload is shaped differently.
                 const rate = rec.mid_rate ?? rec.average_rate ?? rec.rate ?? rec.mid ?? rec.value;
                 const match = BOT_CURRENCIES.find(c => c.code === ccy);
                 if (match && rate !== undefined && rate !== null && rate !== '') {
@@ -879,8 +903,11 @@
             if (botAppId && botToken) {
                 statusEl.innerHTML = monthlyStatusHtml('info', 'Fetching BOT exchange rates...');
                 try {
-                    const records = await fetchBotRates(botAppId, botToken, start, end);
+                    const { records, failed } = await fetchBotRates(botAppId, botToken, start, end);
                     botRateMap = extractBotRateMap(records);
+                    if (failed.length > 0) {
+                        botWarning = `BOT rate lookup failed for: ${failed.join('; ')} (other currencies/LP data still populated)`;
+                    }
                 } catch (err) {
                     botWarning = `BOT rate lookup failed (report still generated with LP data only): ${err.message}`;
                 }
