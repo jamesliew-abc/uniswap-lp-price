@@ -596,6 +596,10 @@
                         token1Price
                         volumeToken0
                         volumeToken1
+                        pool {
+                            token0 { symbol }
+                            token1 { symbol }
+                        }
                     }
                 }`
             };
@@ -647,18 +651,35 @@
             }
         }
         
+        // token0/token1 order in a Uniswap pool is fixed by the two tokens' contract addresses, not
+        // by which one is THBT -- so THBT lands on a different side (token0 vs token1) depending on
+        // the pair. Reading pool.token0.symbol per row and orienting off of it (rather than assuming
+        // "token0 is always the other token") is what keeps every pair's THBT/symbol vs symbol/THBT
+        // values, and volumes, on the correct side regardless of address ordering.
+        function orientPoolDayRow(row) {
+            const token0Symbol = (row.pool && row.pool.token0 && row.pool.token0.symbol || '').toUpperCase();
+            const isToken0Thbt = token0Symbol === 'THBT';
+            return {
+                thbtPrice: parseFloat(isToken0Thbt ? row.token0Price : row.token1Price),
+                symbolPrice: parseFloat(isToken0Thbt ? row.token1Price : row.token0Price),
+                thbtVolume: row.volumeToken0 !== undefined ? parseFloat(isToken0Thbt ? row.volumeToken0 : row.volumeToken1) : undefined,
+                symbolVolume: row.volumeToken0 !== undefined ? parseFloat(isToken0Thbt ? row.volumeToken1 : row.volumeToken0) : undefined
+            };
+        }
+
         function displayTableData(data) {
             const tbody = document.getElementById('tableBody');
             tbody.innerHTML = '';
             
             data.forEach(row => {
+                const { symbolPrice, thbtPrice, symbolVolume, thbtVolume } = orientPoolDayRow(row);
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
                     <td>${unixTimestampToDate(row.date)}</td>
-                    <td>${formatNumber(row.token0Price)}</td>
-                    <td>${formatNumber(row.token1Price)}</td>
-                    <td>${formatNumber(row.volumeToken0)}</td>
-                    <td>${formatNumber(row.volumeToken1)}</td>
+                    <td>${formatNumber(symbolPrice)}</td>
+                    <td>${formatNumber(thbtPrice)}</td>
+                    <td>${formatNumber(symbolVolume)}</td>
+                    <td>${formatNumber(thbtVolume)}</td>
                 `;
                 tbody.appendChild(tr);
             });
@@ -689,14 +710,17 @@
             const headers = ['Date', `${symbol}/THBT rate`, `THBT/${symbol} rate`, `Volume ${symbol} -> THBT`, `Volume THBT -> ${symbol}`, 'ID'];
             
             // Create CSV rows
-            const rows = currentData.map(row => [
-                unixTimestampToDate(row.date),
-                row.token0Price,
-                row.token1Price,
-                row.volumeToken0,
-                row.volumeToken1,
-                row.id
-            ]);
+            const rows = currentData.map(row => {
+                const { symbolPrice, thbtPrice, symbolVolume, thbtVolume } = orientPoolDayRow(row);
+                return [
+                    unixTimestampToDate(row.date),
+                    symbolPrice,
+                    thbtPrice,
+                    symbolVolume,
+                    thbtVolume,
+                    row.id
+                ];
+            });
             
             // Combine headers and rows
             const csvContent = [
@@ -774,6 +798,10 @@
                         date
                         token0Price
                         token1Price
+                        pool {
+                            token0 { symbol }
+                            token1 { symbol }
+                        }
                     }
                 }`
             };
@@ -932,8 +960,9 @@
                     const rows = await fetchPoolMonthData(preset.ids, startTs, endTs);
                     rows.forEach(row => {
                         const key = dateKey(new Date(row.date * 1000));
-                        swapToThbt[preset.symbol][key] = parseFloat(row.token0Price);
-                        swapThbtTo[preset.symbol][key] = parseFloat(row.token1Price);
+                        const { symbolPrice, thbtPrice } = orientPoolDayRow(row);
+                        swapToThbt[preset.symbol][key] = symbolPrice;
+                        swapThbtTo[preset.symbol][key] = thbtPrice;
                     });
                 }
             } catch (err) {
