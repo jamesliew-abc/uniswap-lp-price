@@ -303,6 +303,7 @@
         <div class="tabs">
             <button class="tab active" onclick="switchTab('table')">📋 Table View</button>
             <button class="tab" onclick="switchTab('raw')">🔧 Raw JSON</button>
+            <button class="tab" onclick="switchTab('monthly')">📅 Monthly Report</button>
         </div>
         
         <div id="exportSection" style="padding: 20px; background: #f8f9fa; border-bottom: 2px solid #dee2e6; display: none;">
@@ -333,11 +334,82 @@
             <div id="rawStatus"></div>
             <pre class="raw-data" id="rawData" style="display: none;"></pre>
         </div>
+
+        <div id="monthlyView" class="content-section">
+            <div style="padding: 30px;">
+                <div class="form-group">
+                    <label>Report Month</label>
+                    <input type="month" id="reportMonth">
+                </div>
+
+                <div class="row">
+                    <div class="form-group">
+                        <label>BOT API App ID</label>
+                        <input type="text" id="botAppId" placeholder="e.g. 2908" autocomplete="off">
+                    </div>
+
+                    <div class="form-group">
+                        <label>BOT API Token</label>
+                        <input type="password" id="botToken" placeholder="Paste your BOT API token" autocomplete="off">
+                    </div>
+                </div>
+                <label style="display: flex; align-items: center; gap: 8px; font-weight: 400; margin-top: -10px; margin-bottom: 15px; color: #495057;">
+                    <input type="checkbox" id="rememberBot" style="width: auto;">
+                    Remember my BOT App ID/token on this device (saved only in this browser, never sent anywhere else)
+                </label>
+
+                <div class="info-box" style="font-size: 13px; margin-bottom: 15px;">
+                    <strong>Note:</strong> This pulls the BOT Daily Average Exchange Rate (THB to USD/EUR/SGD/AUD) from the <a href="https://portal.api.bot.or.th/portal/catalogue-products/exchange-rates-1" target="_blank">Bank of Thailand API</a> for the selected month, and the daily THBT swap rates for every pair (using both the original and migrated pool IDs) from the Uniswap subgraph using the Graph API key entered above. The BOT App ID/Token fields are optional &mdash; leave them blank to generate the report with just the LP data. The &quot;Exchange to THB&quot; columns mirror the template layout but have no data source defined yet, so they are left blank. If the BOT request fails, check the request/header names against your app's docs in the BOT API portal &mdash; the exact header names weren't confirmable from here.
+                </div>
+
+                <button id="monthlyBtn" onclick="generateMonthlyReport()">📅 Generate Monthly Report</button>
+
+                <div id="monthlyStatus" style="margin-top: 15px;"></div>
+
+                <div id="monthlyExportSection" style="margin-top: 15px; display: none;">
+                    <button onclick="downloadMonthlyReportXls()" style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%);">
+                        📥 Download as Excel (.xls)
+                    </button>
+                </div>
+            </div>
+
+            <div class="table-container" style="padding: 0 30px 30px;">
+                <table id="monthlyTable" style="display: none;"></table>
+            </div>
+        </div>
     </div>
     
     <script>
         const SUBGRAPH_ID = 'Gqm2b5J85n1bhCyDMpGbtbVn4935EvvdyHdHrx3dibyj';
         const API_KEY_STORAGE_KEY = 'thegraph_api_key';
+
+        // --- Monthly report config ---
+        const BOT_APP_ID_STORAGE_KEY = 'bot_app_id';
+        const BOT_TOKEN_STORAGE_KEY = 'bot_api_token';
+        // Best-effort endpoint/header names for the BOT "Average Exchange Rate - THB / Foreign Currency"
+        // API (DAILY_AVG_EXG_RATE). Adjust these if your app's docs in the BOT API portal specify
+        // different header names.
+        const BOT_API_BASE = 'https://apigw1.bot.or.th/bot/public/Stat-ExchangeRate/v2/DAILY_AVG_EXG_RATE';
+        const BOT_CURRENCIES = [
+            { label: 'USD', code: 'USD' },
+            { label: 'EURO', code: 'EUR' },
+            { label: 'SGD', code: 'SGD' },
+            { label: 'AUD', code: 'AUD' }
+        ];
+
+        // Same pool IDs as the dropdown above (original pool + migrated pool), kept here so the
+        // monthly report can query every pair in one go regardless of which one is selected.
+        const POOL_PRESETS = [
+            { symbol: 'USDT', ids: ['0xf24771172649b8840fba253fea6d41db0fb5cfefaffac6c9035e866b9e75083e', '0x0109d8915c44d44c4e80e313a97a297355d94a392f601d3475db9fc3f3a3e347'] },
+            { symbol: 'USDC', ids: ['0xaa1f9fa78b71784ba98f633661c268116e14318ba24272fd923a172fd8adf814', '0x2170196fcf22ae7562908846a4db93d25803a9d4f580307449931df296d01d4e'] },
+            { symbol: 'EURC', ids: ['0x68e22c98bb81fe3c9a34679bd2133b9808ba4486ccdcf48dcf011764aecaaa17', '0xec1379158e435022021b830b9b0c46b6cdf6bedc397ffa0bd7e18877714ddc0e'] },
+            { symbol: 'AUDD', ids: ['0x5d0ebfd517e26be6d24e79ab244e31398ee822c190ea88eb3d517be33be8cc25', '0x16a3361fb09a61ae5a06979db6d3cbaf793721ac92757915018c7d66bbb24bf1'] },
+            { symbol: 'XSGD', ids: ['0xc1266073b10b0b3451ea052881a4be44d99c1d917db8088994babb3f0ce153f1', '0x0a4e35fbc70a9fec2bbe3bd1b0025f7989c46aef327bef7e09ae91d23359f1a3'] }
+        ];
+        // THBK has no known Uniswap pool yet, so its report columns are always left blank.
+        const REPORT_SWAP_SYMBOLS = ['USDT', 'USDC', 'EURC', 'XSGD', 'AUDD', 'THBK'];
+
+        let currentMonthlyReport = null;
 
         // Set today's date as default end date
         document.getElementById('endDate').valueAsDate = new Date();
@@ -361,6 +433,35 @@
                 localStorage.setItem(API_KEY_STORAGE_KEY, document.getElementById('apiKey').value.trim());
             } else {
                 localStorage.removeItem(API_KEY_STORAGE_KEY);
+            }
+        }
+
+        // Default the monthly report picker to the current month
+        document.getElementById('reportMonth').value = new Date().toISOString().slice(0, 7);
+
+        // Restore remembered BOT API credentials, if any
+        (function restoreBotCredentials() {
+            const savedAppId = localStorage.getItem(BOT_APP_ID_STORAGE_KEY);
+            const savedToken = localStorage.getItem(BOT_TOKEN_STORAGE_KEY);
+            if (savedAppId || savedToken) {
+                if (savedAppId) document.getElementById('botAppId').value = savedAppId;
+                if (savedToken) document.getElementById('botToken').value = savedToken;
+                document.getElementById('rememberBot').checked = true;
+            }
+        })();
+
+        document.getElementById('botAppId').addEventListener('input', persistBotCredentialsIfRemembered);
+        document.getElementById('botToken').addEventListener('input', persistBotCredentialsIfRemembered);
+        document.getElementById('rememberBot').addEventListener('change', persistBotCredentialsIfRemembered);
+
+        function persistBotCredentialsIfRemembered() {
+            const remember = document.getElementById('rememberBot').checked;
+            if (remember) {
+                localStorage.setItem(BOT_APP_ID_STORAGE_KEY, document.getElementById('botAppId').value.trim());
+                localStorage.setItem(BOT_TOKEN_STORAGE_KEY, document.getElementById('botToken').value.trim());
+            } else {
+                localStorage.removeItem(BOT_APP_ID_STORAGE_KEY);
+                localStorage.removeItem(BOT_TOKEN_STORAGE_KEY);
             }
         }
 
@@ -611,6 +712,251 @@
             
             link.setAttribute('href', url);
             link.setAttribute('download', filename);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        }
+
+        // --- Monthly report ---
+
+        function pad2(n) {
+            return String(n).padStart(2, '0');
+        }
+
+        function dateKey(date) {
+            return `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())}`;
+        }
+
+        function formatReportDate(date) {
+            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            const yy = String(date.getUTCFullYear()).slice(-2);
+            return `${date.getUTCDate()} ${months[date.getUTCMonth()]} ${yy}`;
+        }
+
+        function getMonthRange(monthStr) {
+            const [year, month] = monthStr.split('-').map(Number);
+            const start = new Date(Date.UTC(year, month - 1, 1));
+            const end = new Date(Date.UTC(year, month, 0)); // last day of the month
+            return { start, end, daysInMonth: end.getUTCDate() };
+        }
+
+        function monthlyStatusHtml(type, message) {
+            return `<div class="status ${type}">${message}</div>`;
+        }
+
+        async function fetchPoolMonthData(ids, startTs, endTs) {
+            const endpoint = buildEndpoint();
+            const query = {
+                query: `{
+                    poolDayDatas(
+                        first: 70,
+                        orderBy: date,
+                        orderDirection: asc,
+                        where: {
+                            pool_in: ${JSON.stringify(ids)},
+                            date_gte: ${startTs},
+                            date_lte: ${endTs}
+                        }
+                    ) {
+                        date
+                        token0Price
+                        token1Price
+                    }
+                }`
+            };
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(query)
+            });
+            if (!response.ok) {
+                throw new Error(`Subgraph HTTP ${response.status}`);
+            }
+            const result = await response.json();
+            if (result.errors) {
+                throw new Error(result.errors[0].message);
+            }
+            return result.data.poolDayDatas || [];
+        }
+
+        async function fetchBotRates(appId, token, start, end) {
+            const startPeriod = dateKey(start);
+            const endPeriod = dateKey(end);
+            const currencyParam = BOT_CURRENCIES.map(c => c.code).join(',');
+            const url = `${BOT_API_BASE}/?start_period=${startPeriod}&end_period=${endPeriod}&currency_id=${currencyParam}`;
+
+            const response = await fetch(url, {
+                headers: {
+                    'accept': 'application/json',
+                    'X-IBM-Client-Id': appId,
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+            const rawText = await response.text();
+            let json;
+            try {
+                json = JSON.parse(rawText);
+            } catch (e) {
+                throw new Error(`BOT API returned a non-JSON response (HTTP ${response.status}): ${rawText.slice(0, 200)}`);
+            }
+            if (!response.ok) {
+                throw new Error(`BOT API HTTP ${response.status}: ${JSON.stringify(json).slice(0, 300)}`);
+            }
+            return json?.result?.data?.data_detail || json?.data?.data_detail || json?.data_detail || (Array.isArray(json) ? json : []);
+        }
+
+        function extractBotRateMap(records) {
+            const map = {};
+            BOT_CURRENCIES.forEach(c => { map[c.label] = {}; });
+
+            records.forEach(rec => {
+                const dateRaw = rec.period || rec.date || rec.period_date || rec.day;
+                if (!dateRaw) return;
+                const d = new Date(dateRaw);
+                if (isNaN(d.getTime())) return;
+                const key = dateKey(d);
+
+                const ccy = rec.currency_id || rec.currency || rec.ccy;
+                const rate = rec.mid_rate ?? rec.average_rate ?? rec.rate ?? rec.mid ?? rec.value;
+                const match = BOT_CURRENCIES.find(c => c.code === ccy);
+                if (match && rate !== undefined && rate !== null && rate !== '') {
+                    map[match.label][key] = parseFloat(rate);
+                }
+            });
+
+            return map;
+        }
+
+        async function generateMonthlyReport() {
+            const statusEl = document.getElementById('monthlyStatus');
+            const btn = document.getElementById('monthlyBtn');
+            const monthStr = document.getElementById('reportMonth').value;
+            const apiKey = document.getElementById('apiKey').value.trim();
+            const botAppId = document.getElementById('botAppId').value.trim();
+            const botToken = document.getElementById('botToken').value.trim();
+
+            if (!monthStr) {
+                statusEl.innerHTML = monthlyStatusHtml('error', 'Please pick a report month');
+                return;
+            }
+            if (!apiKey) {
+                statusEl.innerHTML = monthlyStatusHtml('error', 'Please enter The Graph API key above (used for the LP pool data)');
+                return;
+            }
+
+            btn.disabled = true;
+            statusEl.innerHTML = monthlyStatusHtml('info', 'Fetching LP pool data from the subgraph...');
+
+            const { start, end, daysInMonth } = getMonthRange(monthStr);
+            const startTs = Math.floor(start.getTime() / 1000);
+            const endTs = Math.floor(end.getTime() / 1000) + 86399;
+
+            const swapThbtTo = {}; // [symbol][dateKey] = THBT -> symbol rate
+            const swapToThbt = {}; // [symbol][dateKey] = symbol -> THBT rate
+            REPORT_SWAP_SYMBOLS.forEach(s => { swapThbtTo[s] = {}; swapToThbt[s] = {}; });
+
+            try {
+                for (const preset of POOL_PRESETS) {
+                    const rows = await fetchPoolMonthData(preset.ids, startTs, endTs);
+                    rows.forEach(row => {
+                        const key = dateKey(new Date(row.date * 1000));
+                        swapToThbt[preset.symbol][key] = parseFloat(row.token0Price);
+                        swapThbtTo[preset.symbol][key] = parseFloat(row.token1Price);
+                    });
+                }
+            } catch (err) {
+                statusEl.innerHTML = monthlyStatusHtml('error', `Failed to fetch LP pool data: ${err.message}`);
+                btn.disabled = false;
+                return;
+            }
+
+            let botRateMap = {};
+            BOT_CURRENCIES.forEach(c => { botRateMap[c.label] = {}; });
+            let botWarning = '';
+
+            if (botAppId && botToken) {
+                statusEl.innerHTML = monthlyStatusHtml('info', 'Fetching BOT exchange rates...');
+                try {
+                    const records = await fetchBotRates(botAppId, botToken, start, end);
+                    botRateMap = extractBotRateMap(records);
+                } catch (err) {
+                    botWarning = `BOT rate lookup failed (report still generated with LP data only): ${err.message}`;
+                }
+            }
+
+            const days = [];
+            for (let i = 0; i < daysInMonth; i++) {
+                days.push(new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1 + i)));
+            }
+
+            currentMonthlyReport = { monthStr, days, botRateMap, swapThbtTo, swapToThbt };
+            renderMonthlyTable(currentMonthlyReport);
+            document.getElementById('monthlyExportSection').style.display = 'block';
+
+            statusEl.innerHTML = botWarning
+                ? monthlyStatusHtml('error', botWarning)
+                : monthlyStatusHtml('success', `Report generated for ${monthStr} (${daysInMonth} days)`);
+            btn.disabled = false;
+        }
+
+        function renderMonthlyTable(report) {
+            const table = document.getElementById('monthlyTable');
+            const monthLabel = new Date(report.monthStr + '-01T00:00:00Z').toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+            const swapCols = REPORT_SWAP_SYMBOLS;
+            const botCols = BOT_CURRENCIES.map(c => c.label);
+            const totalCols = 1 + botCols.length + swapCols.length + botCols.length + swapCols.length;
+
+            let html = '<thead>';
+            html += `<tr><th colspan="${totalCols}" style="background:#c6e0b4;color:#1e4620;text-align:left;">รายงานค่าเฉลี่ยอัตราแลกเปลี่ยนรายวัน ของบริการ Swap &mdash; ${monthLabel}</th></tr>`;
+            html += `<tr>
+                <th rowspan="2" style="background:#eef1f5;">วันที่</th>
+                <th colspan="${botCols.length}" style="background:#bdd7ee;">BOT Rate THB to</th>
+                <th colspan="${swapCols.length}" style="background:#bdd7ee;">Swap THBT to</th>
+                <th colspan="${botCols.length}" style="background:#fce4d6;">Exchange to THB</th>
+                <th colspan="${swapCols.length}" style="background:#fce4d6;">Swap to THBT</th>
+            </tr>`;
+            html += '<tr>';
+            botCols.forEach(c => { html += `<th style="background:#dbe8f7;">${c}</th>`; });
+            swapCols.forEach(c => { html += `<th style="background:#dbe8f7;">${c}</th>`; });
+            botCols.forEach(c => { html += `<th style="background:#fdeee3;">${c}</th>`; });
+            swapCols.forEach(c => { html += `<th style="background:#fdeee3;">${c}</th>`; });
+            html += '</tr></thead><tbody>';
+
+            report.days.forEach(d => {
+                const key = dateKey(d);
+                html += `<tr><td>${formatReportDate(d)}</td>`;
+                botCols.forEach(c => {
+                    const v = report.botRateMap[c] ? report.botRateMap[c][key] : undefined;
+                    html += `<td>${v !== undefined ? formatNumber(v) : ''}</td>`;
+                });
+                swapCols.forEach(s => {
+                    const v = report.swapThbtTo[s] ? report.swapThbtTo[s][key] : undefined;
+                    html += `<td>${v !== undefined ? formatNumber(v) : ''}</td>`;
+                });
+                botCols.forEach(() => { html += '<td></td>'; }); // Exchange to THB: no data source defined yet
+                swapCols.forEach(s => {
+                    const v = report.swapToThbt[s] ? report.swapToThbt[s][key] : undefined;
+                    html += `<td>${v !== undefined ? formatNumber(v) : ''}</td>`;
+                });
+                html += '</tr>';
+            });
+            html += '</tbody>';
+
+            table.innerHTML = html;
+            table.style.display = 'table';
+        }
+
+        function downloadMonthlyReportXls() {
+            if (!currentMonthlyReport) return;
+            const table = document.getElementById('monthlyTable');
+            const htmlDoc = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8"></head><body>${table.outerHTML}</body></html>`;
+            const blob = new Blob(['\ufeff' + htmlDoc], { type: 'application/vnd.ms-excel' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            link.href = url;
+            link.download = `THBT_Swap_Monthly_Report_${currentMonthlyReport.monthStr}.xls`;
             link.style.visibility = 'hidden';
             document.body.appendChild(link);
             link.click();
