@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>THBT Price Deviation Dashboard</title>
+    <style>
+        :root {
+            /* Brand colours shared with index.html */
+            --brand-1: #667eea;
+            --brand-2: #764ba2;
+            --ink: #1f2430;
+            --muted: #6b7180;
+            --line: #e6e8ef;
+            --surface: #ffffff;
+            --surface-2: #f6f7fb;
+
+            /* Deviation states */
+            --ok-bg: #e9f7ef;     --ok-ink: #1d6b3d;     --ok-dot: #2ea862;
+            --warn-bg: #fff6d6;   --warn-ink: #7a5800;   --warn-dot: #e0a800;
+            --crit-bg: #fde4e4;   --crit-ink: #9b1c1c;   --crit-dot: #dc3545;
+            --none-bg: #f1f2f6;   --none-ink: #5c6170;   --none-dot: #a3a8b5;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, var(--brand-1) 0%, var(--brand-2) 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: var(--ink);
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: var(--surface);
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, var(--brand-1) 0%, var(--brand-2) 100%);
+            color: #fff;
+            padding: 24px 30px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px 24px;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .header h1 { font-size: 1.6em; text-wrap: balance; }
+        .header p { opacity: 0.9; margin-top: 4px; font-size: 14px; }
+        .header nav a {
+            color: #fff;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 14px;
+            padding: 8px 14px;
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            border-radius: 8px;
+            white-space: nowrap;
+        }
+        .header nav a:hover { background: rgba(255, 255, 255, 0.15); }
+
+        /* Toolbar: refresh controls + last-updated */
+        .toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 12px 20px;
+            padding: 18px 30px;
+            background: var(--surface-2);
+            border-bottom: 1px solid var(--line);
+        }
+        .toolbar .spacer { flex: 1; }
+        .meta { font-size: 13px; color: var(--muted); display: grid; gap: 2px; }
+        .meta strong { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+        button {
+            font: inherit;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            border-radius: 8px;
+            padding: 10px 20px;
+            background: linear-gradient(135deg, var(--brand-1) 0%, var(--brand-2) 100%);
+            color: #fff;
+            transition: transform 0.15s, box-shadow 0.15s;
+        }
+        button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4); }
+        button:disabled { opacity: 0.6; cursor: not-allowed; }
+        button.secondary {
+            background: var(--surface);
+            color: var(--brand-2);
+            border: 1px solid var(--line);
+        }
+        button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible {
+            outline: 3px solid rgba(102, 126, 234, 0.5);
+            outline-offset: 2px;
+        }
+
+        label { font-size: 13px; font-weight: 600; color: #495057; }
+        select, input[type="text"], input[type="password"] {
+            font: inherit;
+            font-size: 14px;
+            padding: 9px 12px;
+            border: 1px solid #cfd4de;
+            border-radius: 8px;
+            background: var(--surface);
+            color: var(--ink);
+        }
+        .inline-field { display: flex; align-items: center; gap: 8px; }
+
+        /* Settings panel */
+        details.settings { border-bottom: 1px solid var(--line); }
+        details.settings summary {
+            cursor: pointer;
+            padding: 14px 30px;
+            font-weight: 600;
+            color: var(--brand-2);
+            list-style: none;
+        }
+        details.settings summary::-webkit-details-marker { display: none; }
+        details.settings summary::before { content: '▸ '; }
+        details.settings[open] summary::before { content: '▾ '; }
+        .settings-body { padding: 0 30px 22px; display: grid; gap: 16px; }
+        .settings-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 16px;
+        }
+        .field { display: grid; gap: 6px; min-width: 0; }
+        .field input { width: 100%; }
+        .check { display: flex; align-items: center; gap: 8px; font-weight: 400; color: #495057; }
+        .hint { font-size: 13px; color: var(--muted); line-height: 1.5; }
+
+        /* Summary chips */
+        .summary {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            padding: 20px 30px 0;
+        }
+        .chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            border-radius: 999px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        .chip .dot { width: 8px; height: 8px; border-radius: 50%; }
+        .chip.crit { background: var(--crit-bg); color: var(--crit-ink); }  .chip.crit .dot { background: var(--crit-dot); }
+        .chip.warn { background: var(--warn-bg); color: var(--warn-ink); }  .chip.warn .dot { background: var(--warn-dot); }
+        .chip.ok   { background: var(--ok-bg);   color: var(--ok-ink); }    .chip.ok .dot   { background: var(--ok-dot); }
+        .chip.none { background: var(--none-bg); color: var(--none-ink); }  .chip.none .dot { background: var(--none-dot); }
+
+        .status-msg {
+            margin: 16px 30px 0;
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        .status-msg.error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .status-msg.info  { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+
+        /* Main table */
+        .table-wrap { overflow-x: auto; padding: 20px 30px 10px; }
+        table { width: 100%; border-collapse: collapse; min-width: 760px; }
+        th {
+            text-align: left;
+            font-size: 12px;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: var(--muted);
+            font-weight: 600;
+            padding: 10px 14px;
+            border-bottom: 2px solid var(--line);
+            white-space: nowrap;
+        }
+        th.num, td.num { text-align: right; }
+        td {
+            padding: 14px;
+            border-bottom: 1px solid var(--line);
+            font-size: 14px;
+            vertical-align: middle;
+        }
+        td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+        td .sub { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
+        td.pair { font-weight: 700; white-space: nowrap; }
+        td.pair a { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--muted); }
+        td.pair a:hover { color: var(--brand-2); }
+
+        tr.crit td { background: var(--crit-bg); }
+        tr.warn td { background: var(--warn-bg); }
+        tr.crit td:first-child { box-shadow: inset 4px 0 0 var(--crit-dot); }
+        tr.warn td:first-child { box-shadow: inset 4px 0 0 var(--warn-dot); }
+        tr.crit .dev { color: var(--crit-ink); font-weight: 700; }
+        tr.warn .dev { color: var(--warn-ink); font-weight: 700; }
+
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 3px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+        .pill.crit { background: var(--crit-dot); color: #fff; }
+        .pill.warn { background: var(--warn-dot); color: #3d2c00; }
+        .pill.ok   { background: var(--ok-bg); color: var(--ok-ink); }
+        .pill.none { background: var(--none-bg); color: var(--none-ink); }
+
+        .empty { padding: 40px 14px; text-align: center; color: var(--muted); }
+
+        .footnote {
+            padding: 10px 30px 26px;
+            font-size: 13px;
+            color: var(--muted);
+            line-height: 1.6;
+        }
+        .footnote ul { padding-left: 18px; }
+
+        @media (max-width: 600px) {
+            body { padding: 0; }
+            .container { border-radius: 0; }
+            .header, .toolbar, details.settings summary, .settings-body, .summary, .table-wrap, .footnote {
+                padding-left: 16px; padding-right: 16px;
+            }
+            .status-msg { margin-left: 16px; margin-right: 16px; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            button { transition: none; }
+            button:hover:not(:disabled) { transform: none; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <div>
+                <h1>THBT Price Deviation Dashboard</h1>
+                <p>Live Uniswap v4 pool prices on Base vs. the Bank of Thailand daily average rate</p>
+            </div>
+            <nav><a href="index.html">← Pool Data Viewer</a></nav>
+        </header>
+
+        <div class="toolbar">
+            <button id="refreshBtn" type="button">Refresh now</button>
+            <div class="inline-field">
+                <label for="intervalSelect">Auto-refresh</label>
+                <select id="intervalSelect">
+                    <option value="10">Every 10 min</option>
+                    <option value="15">Every 15 min</option>
+                    <option value="30">Every 30 min</option>
+                    <option value="60">Every 60 min</option>
+                    <option value="0">Off</option>
+                </select>
+            </div>
+            <div class="spacer"></div>
+            <div class="meta">
+                <span>Pool prices updated: <strong id="lastUpdated">never</strong></span>
+                <span>Next refresh: <strong id="nextRefresh">–</strong></span>
+            </div>
+        </div>
+
+        <details class="settings" id="settingsPanel">
+            <summary>Settings</summary>
+            <div class="settings-body">
+                <div class="settings-grid">
+                    <div class="field">
+                        <label for="apiKey">The Graph API key</label>
+                        <input type="password" id="apiKey" placeholder="Paste your Graph API key" autocomplete="off">
+                    </div>
+                    <div class="field">
+                        <label for="botToken">BOT API token</label>
+                        <input type="password" id="botToken" placeholder="Paste your BOT API token" autocomplete="off">
+                    </div>
+                    <div class="field">
+                        <label for="botProxyUrl">BOT proxy URL</label>
+                        <input type="text" id="botProxyUrl" placeholder="https://your-worker.your-subdomain.workers.dev" autocomplete="off">
+                    </div>
+                </div>
+                <label class="check"><input type="checkbox" id="rememberKeys"> Remember my Graph key and BOT token on this device (saved only in this browser)</label>
+                <p class="hint">These are the same settings as the Pool Data Viewer and are shared with it in this browser. If you already saved them there, they're filled in here automatically. The BOT proxy is the <code>bot-proxy-worker.js</code> Cloudflare Worker described in the README.</p>
+                <div><button id="saveSettingsBtn" type="button" class="secondary">Apply and refresh</button></div>
+            </div>
+        </details>
+
+        <div class="summary" id="summary" aria-live="polite"></div>
+        <div id="statusArea"></div>
+
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Pair</th>
+                        <th class="num">Uniswap rate<br>(THBT per 1 token)</th>
+                        <th class="num">BOT rate<br>(THB per 1 unit)</th>
+                        <th class="num">Deviation</th>
+                        <th>Status</th>
+                        <th>Last swap</th>
+                    </tr>
+                </thead>
+                <tbody id="rateBody">
+                    <tr><td colspan="6" class="empty">Add your Graph API key and BOT details under Settings, then press Refresh now.</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="footnote">
+            <ul>
+                <li><strong>Deviation</strong> = (Uniswap rate − BOT rate) ÷ BOT rate, treating 1 THBT as 1 THB. Positive means the pool gives more THBT per token than the BOT rate.</li>
+                <li><strong>Thresholds:</strong> red when the absolute deviation is more than 4%, yellow when it is more than 2%.</li>
+                <li><strong>BOT rate</strong> is the Daily Average Exchange Rate mid rate, published once per business day. On weekends and holidays the most recent published rate is used, and its date is shown under the rate. USDT and USDC are both compared against USD.</li>
+                <li><strong>Uniswap rate</strong> is each pool's current price from the Uniswap v4 subgraph, which updates with every swap. Each pair uses its current (migrated) pool.</li>
+                <li>Auto-refresh runs only while this page is open.</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        // ---------------------------------------------------------------------------------------
+        // Config
+        // ---------------------------------------------------------------------------------------
+        const SUBGRAPH_ID = 'Gqm2b5J85n1bhCyDMpGbtbVn4935EvvdyHdHrx3dibyj';
+
+        // Shared with index.html (same origin on GitHub Pages), so keys saved there work here too.
+        const STORAGE = {
+            graphKey: 'thegraph_api_key',
+            botToken: 'bot_api_token',
+            botProxy: 'bot_proxy_url',
+            interval: 'dashboard_refresh_minutes',
+            botCache: 'dashboard_bot_rates_cache'
+        };
+
+        const DEVIATION_RED = 4;     // percent
+        const DEVIATION_YELLOW = 2;  // percent
+
+        // BOT rates change once per business day, so they are re-fetched at most every 3 hours
+        // (or immediately on "Refresh now").
+        const BOT_CACHE_MS = 3 * 60 * 60 * 1000;
+        // Look back far enough to cover long Thai public-holiday runs.
+        const BOT_LOOKBACK_DAYS = 14;
+
+        // Current pool is the migrated pool (same IDs as index.html). The original pool is used
+        // only as a fallback if the migrated one is missing from the subgraph.
+        const PAIRS = [
+            { symbol: 'USDT', currency: 'USD', poolId: '0x0109d8915c44d44c4e80e313a97a297355d94a392f601d3475db9fc3f3a3e347', fallbackId: '0xf24771172649b8840fba253fea6d41db0fb5cfefaffac6c9035e866b9e75083e' },
+            { symbol: 'USDC', currency: 'USD', poolId: '0x2170196fcf22ae7562908846a4db93d25803a9d4f580307449931df296d01d4e', fallbackId: '0xaa1f9fa78b71784ba98f633661c268116e14318ba24272fd923a172fd8adf814' },
+            { symbol: 'EURC', currency: 'EUR', poolId: '0xec1379158e435022021b830b9b0c46b6cdf6bedc397ffa0bd7e18877714ddc0e', fallbackId: '0x68e22c98bb81fe3c9a34679bd2133b9808ba4486ccdcf48dcf011764aecaaa17' },
+            { symbol: 'XSGD', currency: 'SGD', poolId: '0x0a4e35fbc70a9fec2bbe3bd1b0025f7989c46aef327bef7e09ae91d23359f1a3', fallbackId: '0xc1266073b10b0b3451ea052881a4be44d99c1d917db8088994babb3f0ce153f1' },
+            { symbol: 'AUDD', currency: 'AUD', poolId: '0x16a3361fb09a61ae5a06979db6d3cbaf793721ac92757915018c7d66bbb24bf1', fallbackId: '0x5d0ebfd517e26be6d24e79ab244e31398ee822c190ea88eb3d517be33be8cc25' }
+        ];
+        const BOT_CURRENCIES = [...new Set(PAIRS.map(p => p.currency))];
+
+        // ---------------------------------------------------------------------------------------
+        // Small helpers
+        // ---------------------------------------------------------------------------------------
+        const $ = id => document.getElementById(id);
+
+        function storageGet(key) {
+            try { return localStorage.getItem(key); } catch (e) { return null; }
+        }
+        function storageSet(key, value) {
+            try { localStorage.setItem(key, value); } catch (e) { /* storage unavailable */ }
+        }
+        function storageRemove(key) {
+            try { localStorage.removeItem(key); } catch (e) { /* storage unavailable */ }
+        }
+
+        function escapeHtml(s) {
+            return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+
+        // Dates in Bangkok time (BOT publishes on Thai business days).
+        function bangkokDateKey(date) {
+            return new Date(date.getTime() + 7 * 3600 * 1000).toISOString().slice(0, 10);
+        }
+
+        function formatRate(n) {
+            if (n === undefined || n === null || !isFinite(n)) return '–';
+            return n.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+        }
+
+        function formatDateTime(date) {
+            return date.toLocaleString('en-GB', {
+                timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short', year: 'numeric',
+                hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+            }) + ' ICT';
+        }
+
+        function formatBotDate(key) {
+            const d = new Date(key + 'T00:00:00Z');
+            return d.toLocaleDateString('en-GB', { timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+        }
+
+        function formatAgo(unixSeconds, now) {
+            if (!unixSeconds) return 'no swaps found';
+            const mins = Math.max(0, Math.round((now - unixSeconds * 1000) / 60000));
+            if (mins < 1) return 'just now';
+            if (mins < 60) return `${mins} min ago`;
+            const hours = Math.floor(mins / 60);
+            if (hours < 24) return `${hours} h ago`;
+            const days = Math.floor(hours / 24);
+            return `${days} day${days === 1 ? '' : 's'} ago`;
+        }
+
+        // ---------------------------------------------------------------------------------------
+        // Core calculation (pure functions)
+        // ---------------------------------------------------------------------------------------
+
+        // token0/token1 order is fixed by contract address, not by which token is THBT. Per the
+        // Uniswap subgraph mapping, token0Price is the token1 -> token0 rate (named after the token
+        // you convert INTO). So "THBT per 1 symbol" is token0Price when THBT is token0, and
+        // token1Price when THBT is token1. Same logic as orientPoolDayRow() in index.html.
+        function thbtPerToken(pool) {
+            const isToken0Thbt = (pool.token0 && pool.token0.symbol || '').toUpperCase() === 'THBT';
+            return parseFloat(isToken0Thbt ? pool.token0Price : pool.token1Price);
+        }
+
+        function deviationPct(poolRate, botRate) {
+            if (!isFinite(poolRate) || !isFinite(botRate) || botRate <= 0 || poolRate <= 0) return null;
+            return (poolRate - botRate) / botRate * 100;
+        }
+
+        function classify(dev) {
+            if (dev === null || dev === undefined) return 'none';
+            const abs = Math.abs(dev);
+            if (abs > DEVIATION_RED) return 'crit';
+            if (abs > DEVIATION_YELLOW) return 'warn';
+            return 'ok';
+        }
+
+        // Latest published BOT mid rate per currency, from raw BOT records.
+        function latestBotRates(records) {
+            const latest = {};
+            records.forEach(rec => {
+                const dateRaw = rec.period || rec.date || rec.period_date || rec.day;
+                const ccy = rec.currency_id || rec.currency || rec.ccy;
+                const rate = parseFloat(rec.mid_rate ?? rec.average_rate ?? rec.rate ?? rec.mid ?? rec.value);
+                if (!dateRaw || !ccy || !isFinite(rate)) return;
+                const key = String(dateRaw).slice(0, 10);
+                if (!latest[ccy] || key > latest[ccy].date) latest[ccy] = { rate, date: key };
+            });
+            return latest;
+        }
+
+        // ---------------------------------------------------------------------------------------
+        // Data fetching
+        // ---------------------------------------------------------------------------------------
+        function graphEndpoint() {
+            const key = $('apiKey').value.trim();
+            return key ? `https://gateway.thegraph.com/api/${key}/subgraphs/id/${SUBGRAPH_ID}` : '';
+        }
+
+        // One GraphQL request for every pool's current price plus its latest swap time.
+        async function fetchPools() {
+            const ids = PAIRS.flatMap(p => [p.poolId, p.fallbackId]);
+            const swapQueries = ids.map((id, i) => `
+                s${i}: swaps(first: 1, orderBy: timestamp, orderDirection: desc, where: { pool: "${id}" }) { timestamp }`).join('');
+            const query = `{
+                pools(where: { id_in: ${JSON.stringify(ids)} }) {
+                    id
+                    token0Price
+                    token1Price
+                    token0 { symbol }
+                    token1 { symbol }
+                }
+                ${swapQueries}
+            }`;
+
+            const response = await fetch(graphEndpoint(), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query })
+            });
+            if (!response.ok) throw new Error(`The Graph returned HTTP ${response.status}`);
+            const result = await response.json();
+            if (result.errors) throw new Error(`The Graph: ${result.errors[0].message}`);
+
+            const pools = {};
+            (result.data.pools || []).forEach(p => { pools[p.id.toLowerCase()] = p; });
+            const lastSwap = {};
+            ids.forEach((id, i) => {
+                const row = result.data[`s${i}`];
+                lastSwap[id.toLowerCase()] = row && row[0] ? parseInt(row[0].timestamp, 10) : null;
+            });
+            return { pools, lastSwap };
+        }
+
+        async function fetchBotCurrency(currency, startKey, endKey) {
+            const proxy = $('botProxyUrl').value.trim().replace(/\/$/, '');
+            const url = `${proxy}/Stat-ExchangeRate/v2/DAILY_AVG_EXG_RATE/?start_period=${startKey}&end_period=${endKey}&currency=${currency}`;
+            // Token is sent verbatim (no "Bearer " prefix), same as index.html.
+            const response = await fetch(url, { headers: { 'Accept': '*/*', 'Authorization': $('botToken').value.trim() } });
+            const text = await response.text();
+            let json;
+            try { json = JSON.parse(text); } catch (e) { throw new Error(`non-JSON response (HTTP ${response.status})`); }
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return json?.result?.data?.data_detail || json?.data?.data_detail || json?.data_detail || (Array.isArray(json) ? json : []);
+        }
+
+        // Returns { rates: {USD: {rate, date}, ...}, failed: [...], fetchedAt }
+        async function fetchBotRates() {
+            const now = new Date();
+            const endKey = bangkokDateKey(now);
+            const startKey = bangkokDateKey(new Date(now.getTime() - BOT_LOOKBACK_DAYS * 86400000));
+            const results = await Promise.allSettled(BOT_CURRENCIES.map(c => fetchBotCurrency(c, startKey, endKey)));
+            const records = [];
+            const failed = [];
+            results.forEach((r, i) => {
+                if (r.status === 'fulfilled') records.push(...r.value);
+                else failed.push(`${BOT_CURRENCIES[i]} (${r.reason.message})`);
+            });
+            return { rates: latestBotRates(records), failed, fetchedAt: Date.now() };
+        }
+
+        function loadBotCache() {
+            try {
+                const c = JSON.parse(storageGet(STORAGE.botCache) || 'null');
+                return c && c.rates ? c : null;
+            } catch (e) { return null; }
+        }
+
+        // ---------------------------------------------------------------------------------------
+        // Rendering
+        // ---------------------------------------------------------------------------------------
+        const STATUS_LABEL = { crit: 'Over 4%', warn: 'Over 2%', ok: 'Within 2%', none: 'No data' };
+
+        function renderRows(rows) {
+            const now = Date.now();
+            $('rateBody').innerHTML = rows.map(r => {
+                const devText = r.dev === null ? '–' : `${r.dev > 0 ? '+' : ''}${r.dev.toFixed(2)}%`;
+                const poolLink = `https://app.uniswap.org/explore/pools/base/${r.poolId}`;
+                return `<tr class="${r.state}">
+                    <td class="pair"><a href="${poolLink}" target="_blank" rel="noopener">THBT / ${escapeHtml(r.symbol)}</a>
+                        <span class="sub">vs BOT ${escapeHtml(r.currency)}</span></td>
+                    <td class="num">${formatRate(r.poolRate)}</td>
+                    <td class="num">${formatRate(r.botRate)}<span class="sub">${r.botDate ? escapeHtml(formatBotDate(r.botDate)) : 'not available'}</span></td>
+                    <td class="num dev">${devText}</td>
+                    <td><span class="pill ${r.state}">${STATUS_LABEL[r.state]}</span></td>
+                    <td>${escapeHtml(formatAgo(r.lastSwap, now))}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        function renderSummary(rows) {
+            const count = s => rows.filter(r => r.state === s).length;
+            const chips = [
+                ['crit', `${count('crit')} over 4%`],
+                ['warn', `${count('warn')} over 2%`],
+                ['ok', `${count('ok')} within 2%`]
+            ];
+            if (count('none')) chips.push(['none', `${count('none')} no data`]);
+            $('summary').innerHTML = chips.map(([s, text]) => `<span class="chip ${s}"><span class="dot"></span>${text}</span>`).join('');
+        }
+
+        function showStatus(type, messages) {
+            $('statusArea').innerHTML = messages.length
+                ? `<div class="status-msg ${type}">${messages.map(escapeHtml).join('<br>')}</div>`
+                : '';
+        }
+
+        // ---------------------------------------------------------------------------------------
+        // Refresh cycle
+        // ---------------------------------------------------------------------------------------
+        let botState = loadBotCache();
+        let refreshing = false;
+        let timer = null;
+        let nextRefreshAt = null;
+
+        async function refresh({ forceBot = false } = {}) {
+            if (refreshing) return;
+            const problems = [];
+            if (!$('apiKey').value.trim()) problems.push('Add your Graph API key under Settings.');
+            if (!$('botToken').value.trim() || !$('botProxyUrl').value.trim()) problems.push('Add your BOT API token and BOT proxy URL under Settings to compare against BOT rates.');
+            if (!$('apiKey').value.trim()) {
+                showStatus('error', problems);
+                $('settingsPanel').open = true;
+                scheduleNext();
+                return;
+            }
+
+            refreshing = true;
+            $('refreshBtn').disabled = true;
+            $('refreshBtn').textContent = 'Refreshing…';
+            const warnings = [...problems];
+
+            try {
+                const botDue = !botState || forceBot || (Date.now() - botState.fetchedAt > BOT_CACHE_MS);
+                const haveBotCreds = $('botToken').value.trim() && $('botProxyUrl').value.trim();
+
+                const [poolRes, botRes] = await Promise.allSettled([
+                    fetchPools(),
+                    botDue && haveBotCreds ? fetchBotRates() : Promise.resolve(null)
+                ]);
+
+                if (botRes.status === 'fulfilled' && botRes.value) {
+                    const fresh = botRes.value;
+                    // Keep previously cached rates for any currency that failed this time.
+                    const merged = { ...(botState ? botState.rates : {}), ...fresh.rates };
+                    botState = { rates: merged, fetchedAt: fresh.fetchedAt };
+                    storageSet(STORAGE.botCache, JSON.stringify(botState));
+                    if (fresh.failed.length) warnings.push(`BOT rate lookup failed for ${fresh.failed.join('; ')}. Showing the last known rate where available.`);
+                } else if (botRes.status === 'rejected') {
+                    warnings.push(`BOT rate lookup failed: ${botRes.reason.message}. Showing the last known rates where available.`);
+                }
+
+                if (poolRes.status === 'rejected') throw poolRes.reason;
+                const { pools, lastSwap } = poolRes.value;
+
+                const rows = PAIRS.map(p => {
+                    const id = pools[p.poolId] ? p.poolId : p.fallbackId;
+                    const pool = pools[id];
+                    const poolRate = pool ? thbtPerToken(pool) : NaN;
+                    const bot = botState && botState.rates[p.currency];
+                    const dev = deviationPct(poolRate, bot ? bot.rate : NaN);
+                    return {
+                        symbol: p.symbol, currency: p.currency, poolId: id,
+                        poolRate, botRate: bot ? bot.rate : NaN, botDate: bot ? bot.date : null,
+                        dev, state: classify(dev), lastSwap: lastSwap[id]
+                    };
+                });
+                rows.filter(r => !isFinite(r.poolRate)).forEach(r => warnings.push(`No pool data returned for THBT / ${r.symbol}.`));
+
+                renderRows(rows);
+                renderSummary(rows);
+                $('lastUpdated').textContent = formatDateTime(new Date());
+                showStatus('error', warnings);
+            } catch (err) {
+                showStatus('error', [`Couldn't load pool prices: ${err.message}. The table shows the last successful refresh.`, ...warnings]);
+            } finally {
+                refreshing = false;
+                $('refreshBtn').disabled = false;
+                $('refreshBtn').textContent = 'Refresh now';
+                scheduleNext();
+            }
+        }
+
+        function intervalMinutes() {
+            return parseInt($('intervalSelect').value, 10) || 0;
+        }
+
+        function scheduleNext() {
+            clearTimeout(timer);
+            const mins = intervalMinutes();
+            if (!mins) { nextRefreshAt = null; updateCountdown(); return; }
+            nextRefreshAt = Date.now() + mins * 60000;
+            timer = setTimeout(() => refresh(), mins * 60000);
+            updateCountdown();
+        }
+
+        function updateCountdown() {
+            if (!nextRefreshAt) { $('nextRefresh').textContent = 'auto-refresh off'; return; }
+            const s = Math.max(0, Math.round((nextRefreshAt - Date.now()) / 1000));
+            $('nextRefresh').textContent = `in ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+        }
+        setInterval(updateCountdown, 1000);
+
+        // Browsers throttle timers in background tabs; catch up as soon as the tab is visible again.
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && nextRefreshAt && Date.now() >= nextRefreshAt) refresh();
+        });
+
+        // ---------------------------------------------------------------------------------------
+        // Settings
+        // ---------------------------------------------------------------------------------------
+        function restoreSettings() {
+            const key = storageGet(STORAGE.graphKey);
+            const token = storageGet(STORAGE.botToken);
+            const proxy = storageGet(STORAGE.botProxy);
+            if (key) $('apiKey').value = key;
+            if (token) $('botToken').value = token;
+            if (proxy) $('botProxyUrl').value = proxy;
+            $('rememberKeys').checked = !!(key || token);
+            const saved = storageGet(STORAGE.interval);
+            if (saved !== null && [...$('intervalSelect').options].some(o => o.value === saved)) $('intervalSelect').value = saved;
+        }
+
+        function persistSettings() {
+            // The proxy URL isn't secret, so it's always remembered (same as index.html).
+            storageSet(STORAGE.botProxy, $('botProxyUrl').value.trim());
+            if ($('rememberKeys').checked) {
+                storageSet(STORAGE.graphKey, $('apiKey').value.trim());
+                storageSet(STORAGE.botToken, $('botToken').value.trim());
+            } else {
+                storageRemove(STORAGE.graphKey);
+                storageRemove(STORAGE.botToken);
+            }
+        }
+
+        ['apiKey', 'botToken', 'botProxyUrl'].forEach(id => $(id).addEventListener('input', persistSettings));
+        $('rememberKeys').addEventListener('change', persistSettings);
+
+        $('saveSettingsBtn').addEventListener('click', () => {
+            persistSettings();
+            refresh({ forceBot: true });
+        });
+        $('refreshBtn').addEventListener('click', () => refresh({ forceBot: true }));
+        $('intervalSelect').addEventListener('change', () => {
+            storageSet(STORAGE.interval, $('intervalSelect').value);
+            scheduleNext();
+        });
+
+        restoreSettings();
+        refresh();
+    </script>
+</body>
+</html>
