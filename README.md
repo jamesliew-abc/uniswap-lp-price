@@ -46,6 +46,25 @@ flowchart TB
 
 **5. Deployment is push-to-deploy.** `.github/workflows/static.yml` deploys the whole repository as static content to GitHub Pages on every push to `main` (or manually via workflow dispatch) — no build artifacts, just the raw files.
 
+## Price Deviation Dashboard (`dashboard.html`)
+
+A second page that shows each pool's **current** THBT rate next to the latest BOT Daily Average Exchange Rate (mid rate) and flags the gap:
+
+| Pair | Compared with |
+|---|---|
+| THBT / USDT, THBT / USDC | BOT USD |
+| THBT / EURC | BOT EUR |
+| THBT / XSGD | BOT SGD |
+| THBT / AUDD | BOT AUD |
+
+- **Deviation** = (Uniswap rate − BOT rate) ÷ BOT rate, with the Uniswap rate expressed as THBT per 1 token and 1 THBT treated as 1 THB.
+- **Highlighting:** red when |deviation| > 4%, yellow when > 2%.
+- **Pool prices** come from the Uniswap V4 subgraph's `pools` entity (updates with every swap), all five pools in one GraphQL request. Each pair uses its current (migrated) pool, falling back to the original pool if it's missing.
+- **BOT rates** use the most recent published date in the last 14 days, so weekends and holidays show the last business day's rate. They're cached for 3 hours, since BOT publishes once per business day.
+- **Refresh:** auto-refresh every 10, 15, 30 or 60 minutes (default 10), plus a **Refresh now** button that also re-fetches BOT rates. Auto-refresh runs only while the page is open.
+- **Load:** a 10-minute interval is one subgraph query per refresh, about 4,300 a month for one open tab, within The Graph's free monthly allowance.
+- **Settings** use the same `localStorage` keys as `index.html`, so a Graph key, BOT token and proxy URL saved there are picked up automatically.
+
 ## Setup
 
 - Get a Graph API key from [The Graph Studio](https://thegraph.com/studio/apikeys/) and paste it into the app. The Uniswap V4 subgraph ID is already built in.
