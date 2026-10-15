@@ -27,7 +27,7 @@ import { handleHistory, runScheduled, sendAlert, alertChannels, formatIct } from
 import { runDeviationCheck } from './deviation-alerts.js';
 
 // Must match the deviation-check cron in wrangler.toml.
-const DEVIATION_CHECK_CRON = '*/5 * * * *';
+const DEVIATION_CHECK_CRON = '*/15 * * * *';
 
 const SUBGRAPH_ID = 'Gqm2b5J85n1bhCyDMpGbtbVn4935EvvdyHdHrx3dibyj';
 const BOT_ENDPOINT = 'https://gateway.api.bot.or.th/Stat-ExchangeRate/v2/DAILY_AVG_EXG_RATE/';

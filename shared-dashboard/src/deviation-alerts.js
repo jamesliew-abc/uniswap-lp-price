@@ -1,4 +1,4 @@
-// Deviation alerts: every 5 minutes (cron), compare each pair's live Uniswap price with the
+// Deviation alerts: every 15 minutes (cron), compare each pair's live Uniswap price with the
 // Bank Rate and alert when a pair's status changes:
 //   - goes over 2%            -> "now over 2%"
 //   - goes over 4%            -> "now over 4%"

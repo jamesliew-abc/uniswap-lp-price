@@ -165,7 +165,7 @@ flowchart LR
 
 ### Deviation alerts
 
-Besides the 6-hourly captures, the Worker checks the live deviation of every pair **every 5 minutes** and alerts the same channels when a pair's status changes:
+Besides the 6-hourly captures, the Worker checks the live deviation of every pair **every 15 minutes** (at :00, :15, :30 and :45) and alerts the same channels when a pair's status changes:
 
 | When | Alert |
 |---|---|
@@ -173,13 +173,13 @@ Besides the 6-hourly captures, the Worker checks the live deviation of every pai
 | It goes on to over 4% | ⚠️ `… (now over 4%)` |
 | It comes back within 2% | ✅ `… (back within 2%)` |
 
-- A pair that **stays** out of range doesn't alert again, so a long deviation sends one alert, not one every 5 minutes. Easing from over 4% to over 2% is recorded without an alert.
+- A pair that **stays** out of range doesn't alert again, so a long deviation sends one alert, not one every 15 minutes. Easing from over 4% to over 2% is recorded without an alert.
 - To stop a price sitting right at a threshold from flapping, a pair only counts as back below a threshold once it's at least **0.2 percentage points** under it (e.g. below 1.8% to be "back within 2%").
 - Several pairs changing in the same check are combined into one message.
 - If every channel fails, nothing is recorded and the alert is retried at the next check.
 - Each pair's last status is kept in the `RATES_CACHE` KV namespace, so the check needs that binding (it's already set up).
 - **Pause it** with `DEVIATION_ALERTS = "off"` in `wrangler.toml`. The thresholds are the same `DEVIATION_YELLOW` / `DEVIATION_RED` the dashboard uses.
-- **Usage:** about 290 subgraph queries a day (one per check), well within The Graph's free allowance. It uses one of Cloudflare's cron trigger slots; the free plan allows 5 per account across all your Workers, and this Worker now uses 3.
+- **Usage:** about 100 subgraph queries a day (one per check), well within The Graph's free allowance. It uses one of Cloudflare's cron trigger slots; the free plan allows 5 per account across all your Workers, and this Worker now uses 3.
 
 ### Telegram alerts
 
@@ -188,24 +188,17 @@ Alerts can go to a Telegram channel (or group) as well as, or instead of, Google
 1. **Create the bot.** In Telegram, open a chat with **@BotFather** (the official one, with the blue tick), send `/newbot`, and follow the prompts: a display name (e.g. "THBT Price Alerts") and a username ending in `bot` (e.g. `thbt_price_alerts_bot`). BotFather replies with a **bot token** like `123456789:AAH…`. Keep it private: anyone with it can post as the bot.
 2. **Create the channel.** Tap ✏️ / **New Channel**, name it (e.g. "THBT Price Alerts"), and choose **Private** so only people you invite can join. (A **group** also works if the team wants to chat underneath the alerts: create a group and add the bot as a member instead.)
 3. **Add the bot as an administrator.** Open the channel → its name → **Administrators → Add Admin**, search for the bot's username, and keep only **Post messages** turned on. Bots can't post to channels unless they're admins.
-4. **Find the channel's chat ID.** Post any message in the channel (e.g. "hello"). Then, from the `shared-dashboard` folder:
+4. **Find the channel's chat ID** (in any browser, nothing to install). Post any message in the channel (e.g. "hello"). Then open this address, with your bot token in place of `<bot token>` (keep the word `bot` in front of it):
 
    ```
-   node scripts/telegram-setup.mjs <bot token>
+   https://api.telegram.org/bot<bot token>/getUpdates
    ```
 
-   It lists the chats the bot can see. A private channel's ID looks like `-1001234567890`; copy it including the minus sign.
-5. **Send a test message:**
+   In the text that appears, find `"chat":{"id":-100…` next to your channel's title, and copy that number including the minus sign. If you only see `{"ok":true,"result":[]}`, post another message in the channel and refresh. Treat that address like the token itself: don't share it.
+5. **Add two Worker secrets:** **`TELEGRAM_BOT_TOKEN`** (the bot token) and **`TELEGRAM_CHAT_ID`** (the chat ID). No redeploy is needed.
+6. **Test it:** press **Send alert** on the Live rates page. The note next to the button should say it was sent to Telegram, and the message should appear in the channel. If it says Telegram failed with "not enough rights", check step 3; with "chat not found", check the chat ID.
 
-   ```
-   node scripts/telegram-setup.mjs <bot token> <chat id>
-   ```
-
-   A test alert should appear in the channel. If Telegram says "not enough rights", check step 3.
-6. **Add two Worker secrets:** **`TELEGRAM_BOT_TOKEN`** (the bot token) and **`TELEGRAM_CHAT_ID`** (the chat ID). No redeploy is needed.
-7. Press **Send alert** on the Live rates page. The note under the button should say it was sent to Telegram.
-
-No Node? You can find the chat ID in a browser instead. After step 4's "hello", open `https://api.telegram.org/bot<bot token>/getUpdates` and look for `"chat":{"id":-100…`. Treat that address like the token itself.
+**Optional, with Node.js and a local clone of this repo:** `node scripts/telegram-setup.mjs <bot token>` from the `shared-dashboard` folder lists the chats the bot can see, and `node scripts/telegram-setup.mjs <bot token> <chat id>` sends a test message. It does the same as steps 4 and 6.
 
 To invite colleagues, share the channel's invite link (channel → name → **Invite Links**). To stop Telegram alerts, delete the two secrets. To move them to another channel, add the bot there and change `TELEGRAM_CHAT_ID`.
 
