@@ -37,7 +37,10 @@ Personal links are the quickest. If the dashboard should only ever be seen by na
 | File | Purpose |
 |---|---|
 | `src/worker.js` | Sign-in checks, data fetching, caching and the deviation calculation |
-| `public/index.html` | The dashboard page (no settings or keys) |
+| `public/index.html` | The Live rates page (no settings or keys) |
+| `public/history.html` | The Price history page |
+| `public/theme.css` | Shared orange theme for both pages |
+| `src/history.js` | 6-hourly capture, 90-day backfill, Google Chat alert and the history API |
 | `scripts/new-link.mjs` | Creates a personal link (link mode) |
 | `wrangler.toml` | Worker configuration |
 
@@ -114,13 +117,51 @@ If your company's email filter holds the code emails, ask IT to allow mail from 
 - **Links:** open your own link in a private window and confirm you see live rates. Then change one character of the token and confirm you get "This link isn't valid".
 - **Emailed code:** open the `workers.dev` URL in a private window, enter your work email, and confirm the code arrives and the dashboard loads. Then try a personal address and confirm Access blocks it.
 
+## Price history and alerts
+
+The **Price history** page shows each pair's THBT price at fixed 6-hour marks: **03:00, 09:00, 15:00 and 21:00 Bangkok time**. It opens on the last 7 days, with quick switches for 1, 2 and 3 days and a custom range of up to 90 days.
+
+```mermaid
+flowchart LR
+    C[Cron, just after each mark] --> W[Worker]
+    W -->|price after last swap before the mark| G[Uniswap v4 subgraph]
+    W -->|store| S[(Supabase<br/>thbt_price_marks)]
+    W -->|alert| GC[Google Chat space]
+    P[Price history page] -->|/api/history| W
+    W -->|read| S
+```
+
+- **What's stored:** for each mark and pair, the pool price right after the last swap before that time. It uses the same formula as the Live rates page, applied to the swap's recorded price, so live captures and backfilled history match exactly.
+- **When:** cron triggers at 1 and 15 minutes past each mark (UTC 02:00, 08:00, 14:00, 20:00). The second run only does anything if the first couldn't capture the mark, for example because the subgraph was still catching up.
+- **Backfill:** missing marks from the last 90 days are filled in automatically, up to 120 marks a run, by the cron and when someone opens the history page. The first visit fills the full 90 days in about a minute.
+- **Alert:** when a mark is captured, the Worker posts the five prices to Google Chat. Backfilled marks don't trigger alerts. Each pair is one line:
+
+  ```
+  *THBT prices: 6-hour capture at 15 Oct 2026, 09:00 ICT*
+  THBT / USDC: Uniswap: 33.21, BoT Rate: 33.01, Deviation: +0.61%
+  ```
+
+- **Send to Google Chat button** (Live rates page): posts the prices as of that moment, in the same format, with the sender's name in the title. Prices are fetched fresh, not from the 3-minute cache, and nothing is saved to the price history. To avoid double posts, it can be used once a minute across everyone.
+- **Storage:** Supabase table `public.thbt_price_marks` in "jamesliew-abc's Project". Row level security is on with no policies, so only the Worker's secret key can read or write it.
+
+### Setup
+
+1. **Supabase key.** In Supabase, open the project → **Project Settings → API Keys → Secret keys**, create a key, and add it to the Worker as the secret **`SUPABASE_SECRET_KEY`**. A legacy `service_role` key also works. The project URL is already in `wrangler.toml`.
+2. **Google Chat webhook.** In Google Chat, in a browser rather than the mobile app, open the space → click its name → **Apps & integrations → Add webhooks**. Name it (e.g. "THBT prices"), save, then use **⋮ → Copy link**. Add that URL to the Worker as the secret **`GOOGLE_CHAT_WEBHOOK_URL`**. Treat it like a password: anyone with it can post to the space.
+   - If **Add webhooks** is missing, your Workspace has turned incoming webhooks off. Everything else still works, just without alerts.
+3. **Optional:** set `DASHBOARD_URL` in `wrangler.toml` to the dashboard address. Alerts then include an "Open price history" link.
+4. Deploy (merge to `main`), then open **Price history** once to start the 90-day backfill.
+
+Supabase pauses free projects after about a week without activity. The Worker reads and writes every 6 hours, which should keep the project active.
+
 ## Day to day
 
 - **Adding someone (links):** run `scripts/new-link.mjs`, add the line to `VIEWER_LINKS`, send the link. Updating the secret doesn't need a redeploy.
 - **Removing someone (links):** delete their line from `VIEWER_LINKS`. Their link and remembered browser stop working within seconds. If a link might have been forwarded, replace it with a new one.
 - **Adding or removing someone (emailed code):** change the Access policy in Zero Trust.
 - **Rotating a key:** update the secret in the Worker's settings. It takes effect within seconds.
-- **Changing pools or thresholds:** edit `PAIRS` or `DEVIATION_RED` / `DEVIATION_YELLOW` in `src/worker.js` and push to `main`. Keep `dashboard.html` in step if you change the rules.
+- **Changing pools or thresholds:** edit `PAIRS` or `DEVIATION_RED` / `DEVIATION_YELLOW` in `src/worker.js` and push to `main`. Keep `dashboard.html` in step if you change the rules. A new pair also needs adding to the `symbol` check on the Supabase table.
+- **Alerts stopped?** Check the Worker's **Logs** around a mark: each run logs a line starting with `scheduled capture`. To move alerts to another space, replace the `GOOGLE_CHAT_WEBHOOK_URL` secret.
 - **Local testing:** `npx wrangler dev --var ALLOW_UNAUTHENTICATED:true` with a `.dev.vars` file holding the two keys. Never set `ALLOW_UNAUTHENTICATED` on the deployed Worker.
 
 ## Limitations

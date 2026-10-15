@@ -22,6 +22,8 @@
 //             ALLOWED_EMAIL_DOMAIN (access mode, optional) e.g. "yourcompany.com"
 //   KV:       RATES_CACHE (optional but recommended), shares the cache across Cloudflare locations
 
+import { handleHistory, runScheduled, buildChatMessage, postToChat, dashboardUrlFrom, formatIct } from './history.js';
+
 const SUBGRAPH_ID = 'Gqm2b5J85n1bhCyDMpGbtbVn4935EvvdyHdHrx3dibyj';
 const BOT_ENDPOINT = 'https://gateway.api.bot.or.th/Stat-ExchangeRate/v2/DAILY_AVG_EXG_RATE/';
 
@@ -63,6 +65,30 @@ export default {
       return htmlMessage(auth.status, auth.title || 'Access denied', auth.error);
     }
 
+    if (url.pathname === '/api/history') {
+      if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
+      try {
+        const result = await handleHistory(env, ctx, historyContext(env, ctx), url);
+        const body = result.status === 200 ? { ...result.body, viewer: auth.email, authMode: authMode(env) } : result.body;
+        return json(body, result.status);
+      } catch (err) {
+        return json({ error: err.message }, 502);
+      }
+    }
+
+    if (url.pathname === '/api/alert') {
+      if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
+      // Only from this dashboard's own pages (the link cookie is SameSite=Lax, this is a second check).
+      const origin = request.headers.get('Origin');
+      if (origin && origin !== url.origin) return json({ error: 'Forbidden' }, 403);
+      try {
+        const result = await sendManualAlert(env, ctx, auth.email);
+        return json({ ...result.body, viewer: auth.email, authMode: authMode(env) }, result.status);
+      } catch (err) {
+        return json({ error: err.message }, 502);
+      }
+    }
+
     if (url.pathname === '/api/rates') {
       if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
       try {
@@ -80,7 +106,25 @@ export default {
     res.headers.set('Referrer-Policy', 'no-referrer');
     return res;
   },
+
+  // Cron triggers (wrangler.toml): shortly after each 6-hour mark, plus a retry.
+  async scheduled(event, env, ctx) {
+    const result = await runScheduled(env, historyContext(env, ctx), event.scheduledTime);
+    console.log('scheduled capture', JSON.stringify(result));
+  },
 };
+
+// What the history module needs from this file.
+function historyContext(env, ctx) {
+  return {
+    pairs: PAIRS,
+    subgraphId: SUBGRAPH_ID,
+    deviationPct,
+    classify,
+    thresholds: { yellow: DEVIATION_YELLOW, red: DEVIATION_RED },
+    getBotRates: () => getBotRates(env, ctx),
+  };
+}
 
 const SECURITY_HEADERS = {
   'Cache-Control': 'no-store',
@@ -102,8 +146,9 @@ function htmlMessage(status, title, message) {
 <style>
   body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px; box-sizing: border-box;
          font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #1f2430;
-         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
-  main { background: #fff; border-radius: 16px; padding: 32px; max-width: 460px; box-shadow: 0 20px 60px rgba(0,0,0,.3); }
+         background: linear-gradient(160deg, #ff7a1a 0%, #f26a1b 45%, #ea5a0c 100%); }
+  main { background: linear-gradient(135deg, #ffe4d2 0%, #fff1e7 45%, #fff 100%); border-radius: 18px; padding: 32px;
+         max-width: 460px; box-shadow: 0 10px 30px rgba(150,60,10,.25); }
   h1 { font-size: 1.3em; margin: 0 0 10px; }
   p { margin: 0; line-height: 1.6; color: #4a5060; }
 </style></head><body><main><h1>${esc(title)}</h1><p>${esc(message)}</p></main></body></html>`;
@@ -437,25 +482,57 @@ export function classify(dev) {
   return 'ok';
 }
 
-async function getRates(env, ctx) {
-  const warnings = [];
-  const now = Date.now();
+// ---------------------------------------------------------------------------------------------
+// "Send to Google Chat" button: posts the prices as of right now. Nothing is stored.
+// ---------------------------------------------------------------------------------------------
+const MANUAL_ALERT_COOLDOWN_MS = 60 * 1000;
+const COOLDOWN_KEY = 'manual-alert-last-sent';
+let lastManualAlertAt = 0;
 
-  // Pool prices
-  let pools = await cacheGet(env, 'pools');
-  if (!pools || now - pools.fetchedAt > POOL_TTL_MS) {
-    try {
-      pools = await once('pools', () => fetchPools(env));
-      cachePut(env, ctx, 'pools', pools, 24 * 3600);
-    } catch (err) {
-      if (!pools) throw new Error(`Couldn't load pool prices: ${err.message}`);
-      warnings.push(`Couldn't refresh pool prices (${err.message}). Showing prices from ${new Date(pools.fetchedAt).toISOString()}.`);
-    }
+async function sendManualAlert(env, ctx, viewer) {
+  if (!env.GOOGLE_CHAT_WEBHOOK_URL) {
+    return { status: 503, body: { error: 'Google Chat alerts aren’t set up yet: the GOOGLE_CHAT_WEBHOOK_URL secret is missing on the Worker.' } };
+  }
+  // One alert a minute across everyone, so a double-click or two people at once don't spam the space.
+  let last = lastManualAlertAt;
+  if (env.RATES_CACHE) {
+    try { last = Math.max(last, Number(await env.RATES_CACHE.get(COOLDOWN_KEY)) || 0); } catch (e) { /* best effort */ }
+  }
+  const wait = last + MANUAL_ALERT_COOLDOWN_MS - Date.now();
+  if (wait > 0) {
+    const retryAfter = Math.ceil(wait / 1000);
+    return { status: 429, body: { error: `An alert was just sent. You can send another in ${retryAfter} s.`, retryAfter } };
+  }
+  lastManualAlertAt = Date.now();
+  if (env.RATES_CACHE) {
+    try { await env.RATES_CACHE.put(COOLDOWN_KEY, String(lastManualAlertAt), { expirationTtl: 120 }); } catch (e) { /* best effort */ }
   }
 
-  // BOT rates
+  let data;
+  try {
+    data = await getRates(env, ctx, { fresh: true });
+  } catch (err) {
+    lastManualAlertAt = 0;
+    throw err;
+  }
+  const sentAt = Date.now();
+  const items = data.rows.map(r => ({ symbol: r.symbol, price: r.poolRate, botRate: r.botRate, deviation: r.deviation }));
+  const who = viewer ? ` by ${viewer}` : '';
+  const message = buildChatMessage(`THBT prices: sent from the dashboard${who} at ${formatIct(sentAt)}`, items, dashboardUrlFrom(env), '', 'Open the dashboard');
+  try {
+    await postToChat(env, message);
+  } catch (err) {
+    lastManualAlertAt = 0;
+    if (env.RATES_CACHE) { try { await env.RATES_CACHE.delete(COOLDOWN_KEY); } catch (e) { /* ignore */ } }
+    throw err;
+  }
+  return { status: 200, body: { ...data, sentAt, message: message.text } };
+}
+
+// Latest BOT rates, from the shared cache when it's fresh enough. Problems go into `warnings`.
+async function getBotRates(env, ctx, warnings = []) {
   let bot = await cacheGet(env, 'bot');
-  if (!bot || now - bot.fetchedAt > BOT_TTL_MS) {
+  if (!bot || Date.now() - bot.fetchedAt > BOT_TTL_MS) {
     try {
       const fresh = await once('bot', () => fetchBotRates(env));
       // Keep previously cached rates for any currency that failed this time.
@@ -466,6 +543,28 @@ async function getRates(env, ctx) {
       warnings.push(`BOT rate lookup failed (${err.message}). Showing the last known rates where available.`);
     }
   }
+  return bot;
+}
+
+// `fresh: true` fetches pool prices now instead of using the shared 3-minute cache.
+async function getRates(env, ctx, { fresh = false } = {}) {
+  const warnings = [];
+  const now = Date.now();
+
+  // Pool prices
+  let pools = await cacheGet(env, 'pools');
+  if (fresh || !pools || now - pools.fetchedAt > POOL_TTL_MS) {
+    try {
+      pools = await once('pools', () => fetchPools(env));
+      cachePut(env, ctx, 'pools', pools, 24 * 3600);
+    } catch (err) {
+      if (!pools) throw new Error(`Couldn't load pool prices: ${err.message}`);
+      warnings.push(`Couldn't refresh pool prices (${err.message}). Showing prices from ${new Date(pools.fetchedAt).toISOString()}.`);
+    }
+  }
+
+  // BOT rates
+  const bot = await getBotRates(env, ctx, warnings);
 
   const rows = PAIRS.map(p => {
     const id = pools.pools[p.poolId] ? p.poolId : p.fallbackId;

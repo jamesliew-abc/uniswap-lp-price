@@ -67,7 +67,7 @@ A second page that shows each pool's **current** THBT rate next to the latest BO
 
 ## Shared Dashboard for the Team (`shared-dashboard/`)
 
-A separate version of the price deviation dashboard that colleagues can open with a personal link (or an emailed one-time code), without needing their own Graph key or BOT token. It runs as a Cloudflare Worker that keeps the keys server-side and shares one cached result between all viewers. `dashboard.html` above is unchanged. Setup steps are in [`shared-dashboard/README.md`](shared-dashboard/README.md).
+A separate version of the price deviation dashboard that colleagues can open with a personal link (or an emailed one-time code), without needing their own Graph key or BOT token. It also has a Price history page (6-hourly captures stored in Supabase, 90 days) and posts each capture to Google Chat. It runs as a Cloudflare Worker that keeps the keys server-side and shares one cached result between all viewers. `dashboard.html` above is unchanged. Setup steps are in [`shared-dashboard/README.md`](shared-dashboard/README.md).
 
 ## Setup
 
