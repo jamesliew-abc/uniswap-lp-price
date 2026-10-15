@@ -65,12 +65,9 @@ body {
     flex: none;
     width: 44px; height: 44px;
     border-radius: 50%;
-    display: grid; place-items: center;
-    color: #fff;
-    font-weight: 800;
-    font-size: 22px;
-    background: radial-gradient(circle at 35% 30%, #ffa25a 0%, var(--brand) 55%, #d9480f 100%);
-    box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.12), 0 4px 10px rgba(242, 106, 27, 0.35);
+    display: block;
+    object-fit: contain;
+    box-shadow: 0 4px 10px rgba(242, 106, 27, 0.35);
 }
 .header h1 { font-size: 1.5em; line-height: 1.2; text-wrap: balance; }
 .header p { color: var(--muted); margin-top: 4px; font-size: 14px; }

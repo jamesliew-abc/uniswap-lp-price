@@ -38,7 +38,7 @@ async function saveState(env, state) {
   await env.RATES_CACHE.put(STATE_KEY, JSON.stringify(state));
 }
 
-// rows: [{ symbol, poolRate, botRate, deviation }] from the live rates.
+// rows: [{ symbol, poolRate, bankRate, deviation }] from the live rates.
 // Returns { state, changes: [{ symbol, from, to, row }] } without side effects.
 export function evaluate(prevState, rows, th, now) {
   const state = { ...prevState };
@@ -74,7 +74,7 @@ export async function runDeviationCheck(env, ctxShared, now = Date.now()) {
 
   const note = c => c.to === 2 ? `now over ${th.red}%` : c.to === 1 ? `now over ${th.yellow}%` : `back within ${th.yellow}%`;
   const items = toAlert.map(c => ({
-    symbol: c.symbol, price: c.row.poolRate, bankRate: c.row.botRate, deviation: c.row.deviation, note: note(c),
+    symbol: c.symbol, price: c.row.poolRate, bankRate: c.row.bankRate, deviation: c.row.deviation, note: note(c),
   }));
   const anyOver = toAlert.some(c => c.to > 0);
   const title = toAlert.length === 1
