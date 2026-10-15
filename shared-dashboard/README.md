@@ -134,7 +134,14 @@ flowchart LR
 - **What's stored:** for each mark and pair, the pool price right after the last swap before that time. It uses the same formula as the Live rates page, applied to the swap's recorded price, so live captures and backfilled history match exactly.
 - **When:** cron triggers at 1 and 15 minutes past each mark (UTC 02:00, 08:00, 14:00, 20:00). The second run only does anything if the first couldn't capture the mark, for example because the subgraph was still catching up.
 - **Backfill:** missing marks from the last 90 days are filled in automatically, up to 120 marks a run, by the cron and when someone opens the history page. The first visit fills the full 90 days in about a minute.
-- **Alert:** when a mark is captured, the Worker posts the five prices to Google Chat, each with its deviation from the BoT rate and a status. Backfilled marks don't trigger alerts.
+- **Alert:** when a mark is captured, the Worker posts the five prices to Google Chat. Backfilled marks don't trigger alerts. Each pair is one line:
+
+  ```
+  *THBT prices: 6-hour capture at 15 Oct 2026, 09:00 ICT*
+  THBT / USDC: Uniswap: 33.21, BoT Rate: 33.01, Deviation: +0.61%
+  ```
+
+- **Send to Google Chat button** (Live rates page): posts the prices as of that moment, in the same format, with the sender's name in the title. Prices are fetched fresh, not from the 3-minute cache, and nothing is saved to the price history. To avoid double posts, it can be used once a minute across everyone.
 - **Storage:** Supabase table `public.thbt_price_marks` in "jamesliew-abc's Project". Row level security is on with no policies, so only the Worker's secret key can read or write it.
 
 ### Setup

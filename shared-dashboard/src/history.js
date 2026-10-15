@@ -283,43 +283,54 @@ export async function runScheduled(env, ctxShared, scheduledTime) {
   return result;
 }
 
-function formatIct(ms) {
+export function formatIct(ms) {
   return new Date(ms).toLocaleString('en-GB', {
     timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short', year: 'numeric',
     hour: '2-digit', minute: '2-digit', hour12: false,
   }) + ' ICT';
 }
 
-export function buildChatMessage(mark, rows, bot, { deviationPct, classify, thresholds, dashboardUrl }) {
-  const label = { crit: `🔴 over ${thresholds.red}%`, warn: `🟡 over ${thresholds.yellow}%`, ok: '🟢 within range', none: '⚪ no BoT rate' };
-  const lines = rows.map(r => {
-    const pair = `THBT/${r.symbol}`;
-    if (r.thbt_per_token === null) return `• *${pair}*: no trades yet`;
-    const price = r.thbt_per_token.toFixed(4);
-    const b = bot && bot.rates && bot.rates[r.currency];
-    if (!b) return `• *${pair}*: ${price}`;
-    const dev = deviationPct(r.thbt_per_token, b.rate);
-    const devText = dev === null ? '' : `${dev > 0 ? '+' : ''}${dev.toFixed(2)}%`;
-    return `• *${pair}*: ${price} (BoT ${b.rate.toFixed(4)}, ${devText}) ${label[classify(dev)]}`;
-  });
-  const parts = [`*THBT pool prices at ${formatIct(mark)}*`, ...lines];
-  if (dashboardUrl) parts.push('', `<${dashboardUrl}/history.html|Open price history>`);
+// One line per pair, e.g. "THBT / USDC: Uniswap: 33.21, BoT Rate: 33.01, Deviation: +0.61%".
+// `items` = [{ symbol, price, botRate, deviation }]; missing values show as "n/a".
+export function formatAlertLine({ symbol, price, botRate, deviation }) {
+  const num = v => (v === null || v === undefined || !isFinite(v) ? 'n/a' : Number(v).toFixed(2));
+  const dev = deviation === null || deviation === undefined || !isFinite(deviation)
+    ? 'n/a' : `${deviation > 0 ? '+' : ''}${deviation.toFixed(2)}%`;
+  return `THBT / ${symbol}: Uniswap: ${num(price)}, BoT Rate: ${num(botRate)}, Deviation: ${dev}`;
+}
+
+export function buildChatMessage(title, items, dashboardUrl, linkPage = 'history.html', linkLabel = 'Open price history') {
+  const parts = [`*${title}*`, ...items.map(formatAlertLine)];
+  if (dashboardUrl) parts.push('', `<${dashboardUrl}/${linkPage}|${linkLabel}>`);
   return { text: parts.join('\n') };
 }
 
-async function sendChatAlert(env, mark, rows, bot, ctxShared) {
-  const currencyBySymbol = Object.fromEntries(ctxShared.pairs.map(p => [p.symbol, p.currency]));
-  const withCurrency = rows.map(r => ({ ...r, currency: currencyBySymbol[r.symbol] }));
-  const message = buildChatMessage(mark, withCurrency, bot, {
-    deviationPct: ctxShared.deviationPct, classify: ctxShared.classify, thresholds: ctxShared.thresholds,
-    dashboardUrl: env.DASHBOARD_URL ? String(env.DASHBOARD_URL).replace(/\/+$/, '') : '',
-  });
+export async function postToChat(env, message) {
+  if (!env.GOOGLE_CHAT_WEBHOOK_URL) throw new Error('GOOGLE_CHAT_WEBHOOK_URL secret is not set on the Worker');
   const res = await fetch(env.GOOGLE_CHAT_WEBHOOK_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json; charset=UTF-8' },
     body: JSON.stringify(message),
   });
   if (!res.ok) throw new Error(`Google Chat returned HTTP ${res.status}`);
+}
+
+export function dashboardUrlFrom(env) {
+  return env.DASHBOARD_URL ? String(env.DASHBOARD_URL).replace(/\/+$/, '') : '';
+}
+
+async function sendChatAlert(env, mark, rows, bot, ctxShared) {
+  const currencyBySymbol = Object.fromEntries(ctxShared.pairs.map(p => [p.symbol, p.currency]));
+  const items = rows.map(r => {
+    const b = bot && bot.rates && bot.rates[currencyBySymbol[r.symbol]];
+    return {
+      symbol: r.symbol,
+      price: r.thbt_per_token,
+      botRate: b ? b.rate : null,
+      deviation: b && r.thbt_per_token !== null ? ctxShared.deviationPct(r.thbt_per_token, b.rate) : null,
+    };
+  });
+  await postToChat(env, buildChatMessage(`THBT prices: 6-hour capture at ${formatIct(mark)}`, items, dashboardUrlFrom(env)));
 }
 
 // ---------------------------------------------------------------------------------------------

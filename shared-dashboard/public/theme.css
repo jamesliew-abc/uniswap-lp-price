@@ -160,6 +160,10 @@ select, input[type="text"], input[type="date"] {
     color: var(--ink);
 }
 .inline-field { display: flex; align-items: center; gap: 8px; }
+.alert-action { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.alert-note { font-size: 13px; color: var(--ok-ink); }
+.alert-note.error { color: #8a1c1c; }
+.alert-note:empty { display: none; }
 
 /* Summary chips */
 .summary { display: flex; flex-wrap: wrap; gap: 10px; padding: 20px 30px 0; }

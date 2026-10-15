@@ -37,6 +37,10 @@
                     <option value="0">Off</option>
                 </select>
             </div>
+            <div class="alert-action">
+                <button id="alertBtn" type="button" class="secondary" title="Post the prices as of right now to the team's Google Chat space">Send to Google Chat</button>
+                <span class="alert-note" id="alertNote" role="status" aria-live="polite"></span>
+            </div>
             <div class="spacer"></div>
             <div class="meta">
                 <span>Pool prices as of: <strong id="lastUpdated">loading…</strong></span>
@@ -225,6 +229,66 @@
         else $('intervalSelect').value = '10';
         $('intervalSelect').addEventListener('change', () => { storageSet(INTERVAL_KEY, $('intervalSelect').value); scheduleNext(); });
         $('refreshBtn').addEventListener('click', refresh);
+
+        // "Send to Google Chat": the Worker fetches prices right now, posts them, and returns them
+        // so the table shows exactly what was sent. Nothing is saved to the price history.
+        let alertCooldownTimer = null;
+        function setAlertNote(text, isError = false) {
+            $('alertNote').textContent = text;
+            $('alertNote').classList.toggle('error', isError);
+        }
+        function startAlertCooldown(seconds) {
+            clearInterval(alertCooldownTimer);
+            let left = seconds;
+            $('alertBtn').disabled = true;
+            $('alertBtn').textContent = `Send again in ${left} s`;
+            alertCooldownTimer = setInterval(() => {
+                left--;
+                if (left <= 0) {
+                    clearInterval(alertCooldownTimer);
+                    $('alertBtn').disabled = false;
+                    $('alertBtn').textContent = 'Send to Google Chat';
+                } else {
+                    $('alertBtn').textContent = `Send again in ${left} s`;
+                }
+            }, 1000);
+        }
+        $('alertBtn').addEventListener('click', async () => {
+            $('alertBtn').disabled = true;
+            $('alertBtn').textContent = 'Sending…';
+            setAlertNote('');
+            let res, body = {};
+            try {
+                res = await fetch('/api/alert', { method: 'POST', redirect: 'manual', cache: 'no-store', credentials: 'same-origin' });
+                try { body = await res.json(); } catch (e) { body = {}; }
+            } catch (e) {
+                setAlertNote('Couldn’t reach the dashboard. Check your connection.', true);
+                $('alertBtn').disabled = false;
+                $('alertBtn').textContent = 'Send to Google Chat';
+                return;
+            }
+            if (res.ok) {
+                renderRows(body.rows);
+                renderSummary(body.rows);
+                $('lastUpdated').textContent = formatDateTime(body.poolsFetchedAt);
+                showStatus(body.warnings || []);
+                setAlertNote(`Sent at ${formatDateTime(body.sentAt)}`);
+                startAlertCooldown(60);
+                return;
+            }
+            if (res.status === 429 && body.retryAfter) {
+                setAlertNote(body.error, true);
+                startAlertCooldown(body.retryAfter);
+                return;
+            }
+            if (res.type === 'opaqueredirect' || res.status === 401 || res.status === 403) {
+                setAlertNote(body.authMode === 'link' ? 'Your access link has been turned off.' : 'Your sign-in has expired. Reload the page.', true);
+            } else {
+                setAlertNote(`Not sent: ${body.error || `server returned HTTP ${res.status}`}`, true);
+            }
+            $('alertBtn').disabled = false;
+            $('alertBtn').textContent = 'Send to Google Chat';
+        });
 
         refresh();
     </script>
