@@ -4,17 +4,22 @@
 // compares each THBT pool's live Uniswap v4 price with the latest BOT daily average mid rate.
 //
 // The Graph API key and the BOT API token live here as Worker secrets, so viewers never need
-// (or see) them. Every request must carry a valid Cloudflare Access token: the Worker checks it
-// itself, so the page stays closed even if the Access application is ever misconfigured.
+// (or see) them. Every request is checked by the Worker itself, using one of two sign-in modes:
+//   - "link":   each viewer gets a personal link (…/?k=TOKEN). Links are listed in the
+//               VIEWER_LINKS secret and can be turned off one at a time.
+//   - "access": Cloudflare Access in front of the Worker (e.g. an emailed one-time code); the
+//               Worker verifies the Access token on every request.
+// Until a mode is configured, the Worker refuses every request.
 //
 // Results are cached (pool prices for 3 minutes, BOT rates for 3 hours) and shared by every
 // viewer, so API usage stays the same however many people have the page open.
 //
 // Configuration (see shared-dashboard/README.md):
-//   Secrets:  GRAPH_API_KEY, BOT_API_TOKEN
-//   Vars:     ACCESS_TEAM_DOMAIN  e.g. "yourteam.cloudflareaccess.com"
-//             ACCESS_AUD          the Access application's Audience (AUD) tag
-//             ALLOWED_EMAIL_DOMAIN (optional) e.g. "yourcompany.com", an extra check on top of Access
+//   Secrets:  GRAPH_API_KEY, BOT_API_TOKEN, VIEWER_LINKS (link mode)
+//   Vars:     AUTH_MODE           "link" or "access"
+//             ACCESS_TEAM_DOMAIN  (access mode) e.g. "yourteam.cloudflareaccess.com"
+//             ACCESS_AUD          (access mode) the Access application's Audience (AUD) tag
+//             ALLOWED_EMAIL_DOMAIN (access mode, optional) e.g. "yourcompany.com"
 //   KV:       RATES_CACHE (optional but recommended), shares the cache across Cloudflare locations
 
 const SUBGRAPH_ID = 'Gqm2b5J85n1bhCyDMpGbtbVn4935EvvdyHdHrx3dibyj';
@@ -43,34 +48,161 @@ const BOT_CURRENCIES = [...new Set(PAIRS.map(p => p.currency))];
 // ---------------------------------------------------------------------------------------------
 export default {
   async fetch(request, env, ctx) {
-    const auth = await authenticate(request, env);
-    if (!auth.ok) {
-      return new Response(auth.error + '\n', {
-        status: auth.status,
-        headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' },
-      });
+    const url = new URL(request.url);
+    const isApi = url.pathname.startsWith('/api/');
+
+    // Link mode: someone opening their personal link (…/?k=TOKEN). Swap the token for a cookie
+    // and redirect to the clean URL, so the token doesn't stay in the address bar.
+    if (authMode(env) === 'link' && url.searchParams.has(LINK_PARAM)) {
+      return redeemLink(request, env, url);
     }
 
-    const url = new URL(request.url);
+    const auth = await authenticate(request, env);
+    if (!auth.ok) {
+      if (isApi) return json({ error: auth.error, authMode: authMode(env) }, auth.status);
+      return htmlMessage(auth.status, auth.title || 'Access denied', auth.error);
+    }
+
     if (url.pathname === '/api/rates') {
       if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
       try {
         const data = await getRates(env, ctx);
-        return json({ ...data, viewer: auth.email });
+        return json({ ...data, viewer: auth.email, authMode: authMode(env) });
       } catch (err) {
         return json({ error: err.message }, 502);
       }
     }
 
     // Everything else is the static page.
-    return env.ASSETS.fetch(request);
+    const page = await env.ASSETS.fetch(request);
+    const res = new Response(page.body, page);
+    res.headers.set('Cache-Control', 'no-store');
+    res.headers.set('Referrer-Policy', 'no-referrer');
+    return res;
   },
+};
+
+const SECURITY_HEADERS = {
+  'Cache-Control': 'no-store',
+  'Referrer-Policy': 'no-referrer',
+  'X-Content-Type-Options': 'nosniff',
 };
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
+    headers: { 'Content-Type': 'application/json; charset=utf-8', ...SECURITY_HEADERS },
+  });
+}
+
+function htmlMessage(status, title, message) {
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const body = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${esc(title)}</title>
+<style>
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px; box-sizing: border-box;
+         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #1f2430;
+         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+  main { background: #fff; border-radius: 16px; padding: 32px; max-width: 460px; box-shadow: 0 20px 60px rgba(0,0,0,.3); }
+  h1 { font-size: 1.3em; margin: 0 0 10px; }
+  p { margin: 0; line-height: 1.6; color: #4a5060; }
+</style></head><body><main><h1>${esc(title)}</h1><p>${esc(message)}</p></main></body></html>`;
+  return new Response(body, { status, headers: { 'Content-Type': 'text/html; charset=utf-8', ...SECURITY_HEADERS } });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Sign-in mode
+//   AUTH_MODE = "link"    personal links (…/?k=TOKEN), listed in the VIEWER_LINKS secret
+//   AUTH_MODE = "access"  Cloudflare Access (email one-time code, Google, etc.)
+// Anything else, including unset, refuses every request.
+// ---------------------------------------------------------------------------------------------
+const LINK_PARAM = 'k';
+const LINK_COOKIE = 'thbt_dash_key';
+const LINK_COOKIE_MAX_AGE = 365 * 24 * 3600;  // the link is re-checked on every request anyway
+const MIN_TOKEN_LENGTH = 24;
+
+function authMode(env) {
+  return String(env.AUTH_MODE || '').trim().toLowerCase();
+}
+
+async function authenticate(request, env) {
+  // Only for `wrangler dev` on your own machine; never set this on the deployed Worker.
+  if (env.ALLOW_UNAUTHENTICATED === 'true') return { ok: true, email: 'local-dev' };
+
+  const mode = authMode(env);
+  if (mode === 'link') return authenticateLink(request, env);
+  if (mode === 'access') return authenticateAccess(request, env);
+  return {
+    ok: false, status: 500, title: 'Not set up yet',
+    error: 'This dashboard is not set up yet: AUTH_MODE must be "link" or "access" in wrangler.toml.',
+  };
+}
+
+// VIEWER_LINKS secret: one entry per line (or comma-separated), "name:token".
+// Entries with a short token are ignored, so a typo can't create a guessable link.
+export function parseViewerLinks(raw) {
+  const links = [];
+  String(raw || '').split(/[\n,]+/).forEach(entry => {
+    const i = entry.lastIndexOf(':');
+    if (i < 1) return;
+    const name = entry.slice(0, i).trim();
+    const token = entry.slice(i + 1).trim();
+    if (name && token.length >= MIN_TOKEN_LENGTH) links.push({ name, token });
+  });
+  return links;
+}
+
+async function sha256(text) {
+  return new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)));
+}
+
+// Compares fixed-length hashes in constant time, so response timing reveals nothing about tokens.
+async function findViewer(env, token) {
+  if (!token) return null;
+  const given = await sha256(token);
+  let match = null;
+  for (const link of parseViewerLinks(env.VIEWER_LINKS)) {
+    const expected = await sha256(link.token);
+    let diff = 0;
+    for (let i = 0; i < given.length; i++) diff |= given[i] ^ expected[i];
+    if (diff === 0 && !match) match = link.name;
+  }
+  return match;
+}
+
+function readCookie(request, name) {
+  const header = request.headers.get('Cookie') || '';
+  for (const part of header.split(';')) {
+    const i = part.indexOf('=');
+    if (i > -1 && part.slice(0, i).trim() === name) return decodeURIComponent(part.slice(i + 1).trim());
+  }
+  return null;
+}
+
+const LINK_DENIED = {
+  title: 'This link isn’t valid',
+  error: 'Your access link is missing, mistyped or has been turned off. Ask the dashboard owner for a new link.',
+};
+
+async function authenticateLink(request, env) {
+  if (!parseViewerLinks(env.VIEWER_LINKS).length) {
+    return { ok: false, status: 500, title: 'Not set up yet', error: 'This dashboard is not set up yet: the VIEWER_LINKS secret has no valid links.' };
+  }
+  const name = await findViewer(env, readCookie(request, LINK_COOKIE));
+  if (!name) return { ok: false, status: 403, ...LINK_DENIED };
+  return { ok: true, email: name };
+}
+
+async function redeemLink(request, env, url) {
+  const token = url.searchParams.get(LINK_PARAM);
+  const name = await findViewer(env, token);
+  if (!name) return htmlMessage(403, LINK_DENIED.title, LINK_DENIED.error);
+
+  url.searchParams.delete(LINK_PARAM);
+  const cookie = `${LINK_COOKIE}=${encodeURIComponent(token)}; Path=/; Max-Age=${LINK_COOKIE_MAX_AGE}; HttpOnly; Secure; SameSite=Lax`;
+  return new Response(null, {
+    status: 303,
+    headers: { Location: url.pathname + url.search, 'Set-Cookie': cookie, ...SECURITY_HEADERS },
   });
 }
 
@@ -78,10 +210,7 @@ function json(body, status = 200) {
 // Cloudflare Access token check
 // https://developers.cloudflare.com/cloudflare-one/identity/authorization-cookie/validating-json/
 // ---------------------------------------------------------------------------------------------
-async function authenticate(request, env) {
-  // Only for `wrangler dev` on your own machine; never set this on the deployed Worker.
-  if (env.ALLOW_UNAUTHENTICATED === 'true') return { ok: true, email: 'local-dev' };
-
+async function authenticateAccess(request, env) {
   const teamDomain = normaliseTeamDomain(env.ACCESS_TEAM_DOMAIN);
   if (!teamDomain || !env.ACCESS_AUD) {
     return { ok: false, status: 500, error: 'This dashboard is not set up yet: ACCESS_TEAM_DOMAIN and ACCESS_AUD must be configured on the Worker.' };
