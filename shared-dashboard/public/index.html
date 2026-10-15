@@ -4,16 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>THBT Price Deviation Dashboard</title>
+    <link rel="icon" type="image/png" href="/logo.png">
     <link rel="stylesheet" href="/theme.css">
 </head>
 <body>
     <div class="container">
         <header class="header">
             <div class="brand-row">
-                <span class="coin" aria-hidden="true">฿</span>
+                <img class="coin" src="/logo.png" alt="" width="44" height="44">
                 <div>
                     <h1>THBT Price Deviation Dashboard</h1>
-                    <p>Live Uniswap v4 pool prices on Base vs. the Bank Rate (Bank of Thailand daily average)</p>
+                    <p>Live Uniswap v4 pool prices on Base vs. the Bank Rate (daily average)</p>
                 </div>
             </div>
             <div class="viewer" id="viewer"></div>
@@ -74,7 +75,7 @@
             <ul>
                 <li><strong>Deviation</strong> = (Uniswap rate − Bank Rate) ÷ Bank Rate, treating 1 THBT as 1 THB. Positive means the pool gives more THBT per token than the Bank Rate.</li>
                 <li><strong>Thresholds:</strong> red when the absolute deviation is more than 4%, yellow when it is more than 2%. The team's alert channels get a message when a pair goes over 2% or 4%, and when it comes back within 2% (checked every 15 minutes).</li>
-                <li><strong>Bank Rate</strong> is the Bank of Thailand's Daily Average Exchange Rate mid rate, published once per business day. On weekends and holidays the most recent published rate is used, and its date is shown under the rate. USDT and USDC are both compared against USD.</li>
+                <li><strong>Bank Rate</strong> is the official Daily Average Exchange Rate mid rate, published once per business day. On weekends and holidays the most recent published rate is used, and its date is shown under the rate. USDT and USDC are both compared against USD.</li>
                 <li><strong>Uniswap rate</strong> is each pool's current price from the Uniswap v4 subgraph. Prices are shared by everyone viewing this page and are at most a few minutes old.</li>
             </ul>
         </div>
@@ -101,7 +102,7 @@
                 hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
             }) + ' ICT';
         }
-        function formatBotDate(key) {
+        function formatBankDate(key) {
             return new Date(key + 'T00:00:00Z').toLocaleDateString('en-GB', { timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
         }
         function formatAgo(unixSeconds, now) {
@@ -124,7 +125,7 @@
                     <td class="pair"><a href="${poolLink}" target="_blank" rel="noopener">THBT / ${escapeHtml(r.symbol)}</a>
                         <span class="sub">vs ${escapeHtml(r.currency)} Bank Rate</span></td>
                     <td class="num">${formatRate(r.poolRate)}</td>
-                    <td class="num">${formatRate(r.botRate)}<span class="sub">${r.botDate ? escapeHtml(formatBotDate(r.botDate)) : 'not available'}</span></td>
+                    <td class="num">${formatRate(r.bankRate)}<span class="sub">${r.bankDate ? escapeHtml(formatBankDate(r.bankDate)) : 'not available'}</span></td>
                     <td class="num dev">${devText}</td>
                     <td><span class="pill ${escapeHtml(r.state)}">${STATUS_LABEL[r.state] || 'No data'}</span></td>
                     <td>${escapeHtml(formatAgo(r.lastSwap, now))}</td>

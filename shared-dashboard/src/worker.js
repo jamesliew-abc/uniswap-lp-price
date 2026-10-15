@@ -442,7 +442,7 @@ async function fetchBotCurrency(env, currency, startKey, endKey) {
 
 // All published Bank Rates for one currency between two dates: [{ date, rate }], oldest first.
 async function fetchBankRange(env, currency, startKey, endKey) {
-  if (!env.BOT_API_TOKEN) throw new Error('BOT_API_TOKEN secret is not set on the Worker');
+  if (!env.BOT_API_TOKEN) throw new Error('the Bank Rate API token secret is not set on the Worker');
   const records = await fetchBotCurrency(env, currency, startKey, endKey);
   const out = [];
   records.forEach(rec => {
@@ -468,7 +468,7 @@ export function latestBotRates(records) {
 }
 
 async function fetchBotRates(env) {
-  if (!env.BOT_API_TOKEN) throw new Error('BOT_API_TOKEN secret is not set on the Worker');
+  if (!env.BOT_API_TOKEN) throw new Error('the Bank Rate API token secret is not set on the Worker');
   const now = new Date();
   const endKey = bangkokDateKey(now);
   const startKey = bangkokDateKey(new Date(now.getTime() - BOT_LOOKBACK_DAYS * 86400000));
@@ -494,9 +494,9 @@ export function thbtPerToken(pool) {
   return parseFloat(isToken0Thbt ? pool.token0Price : pool.token1Price);
 }
 
-export function deviationPct(poolRate, botRate) {
-  if (!isFinite(poolRate) || !isFinite(botRate) || botRate <= 0 || poolRate <= 0) return null;
-  return (poolRate - botRate) / botRate * 100;
+export function deviationPct(poolRate, bankRate) {
+  if (!isFinite(poolRate) || !isFinite(bankRate) || bankRate <= 0 || poolRate <= 0) return null;
+  return (poolRate - bankRate) / bankRate * 100;
 }
 
 export function classify(dev) {
@@ -546,7 +546,7 @@ async function sendManualAlert(env, ctx, viewer) {
     throw err;
   }
   const sentAt = Date.now();
-  const items = data.rows.map(r => ({ symbol: r.symbol, price: r.poolRate, bankRate: r.botRate, deviation: r.deviation }));
+  const items = data.rows.map(r => ({ symbol: r.symbol, price: r.poolRate, bankRate: r.bankRate, deviation: r.deviation }));
   const who = viewer ? ` by ${viewer}` : '';
   const result = await sendAlert(env, `THBT prices: sent from the dashboard${who} at ${formatIct(sentAt)}`, items, '', 'Open the dashboard');
   if (!result.sent.length) {
@@ -605,8 +605,8 @@ async function getRates(env, ctx, { fresh = false } = {}) {
       currency: p.currency,
       poolId: id,
       poolRate: isFinite(poolRate) ? poolRate : null,
-      botRate: b ? b.rate : null,
-      botDate: b ? b.date : null,
+      bankRate: b ? b.rate : null,
+      bankDate: b ? b.date : null,
       deviation: dev,
       state: classify(dev),
       lastSwap: pools.lastSwap[id] || null,
@@ -618,7 +618,7 @@ async function getRates(env, ctx, { fresh = false } = {}) {
     warnings,
     thresholds: { yellow: DEVIATION_YELLOW, red: DEVIATION_RED },
     poolsFetchedAt: pools.fetchedAt,
-    botFetchedAt: bot ? bot.fetchedAt : null,
+    bankFetchedAt: bot ? bot.fetchedAt : null,
     servedAt: now,
   };
 }
