@@ -1,6 +1,6 @@
 // Price history: the THBT price of each pool at fixed 6-hour marks, stored in Supabase.
 //
-// Marks are 09:00, 15:00, 21:00 and 03:00 Bangkok time (02:00, 08:00, 14:00, 20:00 UTC).
+// Marks are 18:00, 00:00, 06:00 and 12:00 Bangkok time (11:00, 17:00, 23:00, 05:00 UTC).
 // The price at a mark is the pool price right after the last swap before that moment, worked
 // out from the swap's sqrtPriceX96 with the same formula the subgraph uses for token0Price /
 // token1Price. That makes live captures and the 90-day backfill exactly comparable.
@@ -9,9 +9,14 @@
 // - Any mark in the last 90 days that's missing (first run, a failed run) is backfilled from
 //   swap history, a chunk at a time, by the cron and by visits to the history page.
 
-export const MARK_HOURS_UTC = [2, 8, 14, 20];
+// Marks: 18:00, 00:00, 06:00 and 12:00 Bangkok time (11:00, 17:00, 23:00, 05:00 UTC). The daily
+// cycle starts at 18:00, when the day's Bank Rate is published, so every capture in a cycle is
+// compared against the same, newest rate.
+export const MARK_HOURS_UTC = [5, 11, 17, 23];
 export const MARK_STEP_MS = 6 * 3600 * 1000;
-const MARK_OFFSET_MS = 2 * 3600 * 1000;              // marks sit 2h after each 6h UTC boundary
+const MARK_OFFSET_MS = 5 * 3600 * 1000;              // marks sit 5h after each 6h UTC boundary
+const BANK_MARK_UTC_HOUR = 11;                       // the 18:00 ICT mark, right after publication
+const RETRY_AFTER_MS = 10 * 60 * 1000;               // runs this long after a mark are the retry run
 export const HISTORY_DAYS = 90;
 const DAY_MS = 86400 * 1000;
 
@@ -27,6 +32,11 @@ const TABLE = 'thbt_price_marks';
 // The latest mark at or before `ms`.
 export function markAtOrBefore(ms) {
   return Math.floor((ms - MARK_OFFSET_MS) / MARK_STEP_MS) * MARK_STEP_MS + MARK_OFFSET_MS;
+}
+
+// True for times on the current mark schedule (older captures from a previous schedule aren't).
+export function isMark(ms) {
+  return markAtOrBefore(ms) === ms;
 }
 
 // Every mark in [fromMs, toMs], oldest first.
@@ -280,7 +290,9 @@ async function fetchAndStoreBankRates(env, ctxShared, startKey, endKey) {
 
 // Makes sure stored Bank Rates cover `fromMs` (minus a lookback) up to today.
 // Returns true if it had to fetch anything.
-async function ensureBankRates(env, ctxShared, fromMs, now) {
+// `refreshRecent` (scheduled runs) always re-fetches the last 10 days, so a capture right after
+// 18:00 picks up the rate published that evening.
+async function ensureBankRates(env, ctxShared, fromMs, now, { refreshRecent = false } = {}) {
   const needFrom = ictDateKey(fromMs - BANK_LOOKBACK_DAYS * DAY_MS);
   const today = ictDateKey(now);
   const { first, last } = await bankCoverage(env, 'USD');
@@ -288,12 +300,30 @@ async function ensureBankRates(env, ctxShared, fromMs, now) {
     await fetchAndStoreBankRates(env, ctxShared, needFrom, today);
     return true;
   }
-  // Recent rates: refresh the last 10 days if the newest stored one is more than a day old.
-  if (!last || last < ictDateKey(now - DAY_MS)) {
+  // Recent rates: refresh the last 10 days if asked to, or if the newest stored one is more than a day old.
+  if (refreshRecent || !last || last < ictDateKey(now - DAY_MS)) {
     await fetchAndStoreBankRates(env, ctxShared, ictDateKey(now - BANK_LOOKBACK_DAYS * DAY_MS), today);
     return true;
   }
   return false;
+}
+
+// Bank Rate in effect at `mark` for each currency: { USD: { date, rate }, ... }
+async function bankRatesAtMark(env, ctxShared, mark) {
+  const stored = await storedBankRates(env, ictDateKey(mark - BANK_LOOKBACK_DAYS * DAY_MS), ictDateKey(mark));
+  const out = {};
+  [...new Set(ctxShared.pairs.map(p => p.currency))].forEach(c => {
+    const r = bankRateAt(stored[c] || [], mark);
+    if (r) out[c] = r;
+  });
+  return out;
+}
+
+// The 18:00 mark on a weekday expects that day's newly published rate.
+export function expectsNewBankRate(mark) {
+  const d = new Date(mark);
+  const ictDay = new Date(mark + 7 * 3600 * 1000).getUTCDay();
+  return d.getUTCHours() === BANK_MARK_UTC_HOUR && ictDay >= 1 && ictDay <= 5;
 }
 
 export function bankCoverageLooksShort(first, fromMs) {
@@ -350,31 +380,54 @@ export async function runScheduled(env, ctxShared, scheduledTime) {
   if (!supabaseConfigured(env)) throw new Error('SUPABASE_URL and SUPABASE_SECRET_KEY must be set');
   const { pairs, subgraphId } = ctxShared;
   const mark = markAtOrBefore(scheduledTime);
+  const isRetry = scheduledTime - mark >= RETRY_AFTER_MS;
   const meta = await poolMeta(env, pairs, subgraphId);
   const result = { mark: new Date(mark).toISOString(), captured: false, alerted: false, stillMissing: null };
 
   const have = await storedMarks(env, mark, mark, pairs[0].symbol);
+  const pendingKey = `capture-alert-pending:${mark}`;
+  const pending = have.has(mark) && env.RATES_CACHE ? await env.RATES_CACHE.get(pendingKey).catch(() => null) : null;
+
+  // Bank Rates first, so the 18:00 capture can use the rate published that evening. The retry run
+  // only re-fetches them if it has something to do, to keep calls to the Bank Rate API down.
+  try {
+    const refreshRecent = !isRetry || !have.has(mark) || !!pending;
+    result.bankRatesFetched = await ensureBankRates(env, ctxShared, mark - HISTORY_DAYS * DAY_MS, scheduledTime, { refreshRecent });
+  } catch (err) {
+    result.bankRatesError = err.message;
+  }
+
+  let rows = null;
   if (!have.has(mark)) {
     if (meta.indexedTo < mark) {
       // The subgraph hasn't indexed up to the mark yet; the retry cron picks it up.
       result.note = 'subgraph not yet indexed to the mark';
     } else {
-      const rows = await pricesAtMarks(env, [mark], pairs, subgraphId, meta);
+      rows = await pricesAtMarks(env, [mark], pairs, subgraphId, meta);
       await upsertRows(env, rows, 'scheduled');
       result.captured = true;
-      if (alertChannels(env).length) {
-        const bot = ctxShared.getBotRates ? await ctxShared.getBotRates().catch(() => null) : null;
-        const sent = await sendCaptureAlert(env, mark, rows, bot, ctxShared);
-        result.alerted = sent.sent;
-        if (sent.failed.length) result.alertFailures = sent.failed;
-      }
     }
   }
 
-  try {
-    result.bankRatesFetched = await ensureBankRates(env, ctxShared, mark - HISTORY_DAYS * DAY_MS, scheduledTime);
-  } catch (err) {
-    result.bankRatesError = err.message;
+  // Alert for the mark: right after capturing it, or on the retry run if it was held back.
+  if (alertChannels(env).length) {
+    if (rows || pending) {
+      if (!rows) rows = await storedRowsAtMark(env, mark);
+      const bank = await bankRatesAtMark(env, ctxShared, mark);
+      const today = ictDateKey(mark);
+      const waitingForRate = expectsNewBankRate(mark) && !isRetry && env.RATES_CACHE
+        && [...new Set(pairs.map(p => p.currency))].some(c => !bank[c] || bank[c].date !== today);
+      if (waitingForRate) {
+        // Today's rate isn't out yet: hold the alert for the retry run (about 15 minutes later).
+        await env.RATES_CACHE.put(pendingKey, '1', { expirationTtl: 2 * 3600 });
+        result.alertHeld = 'waiting for today\u2019s Bank Rate';
+      } else {
+        const sent = await sendCaptureAlert(env, mark, rows, bank, ctxShared);
+        result.alerted = sent.sent;
+        if (sent.failed.length) result.alertFailures = sent.failed;
+        if (pending) await env.RATES_CACHE.delete(pendingKey).catch(() => {});
+      }
+    }
   }
 
   result.stillMissing = await backfill(env, ctxShared, {
@@ -467,18 +520,31 @@ export function dashboardUrlFrom(env) {
   return env.DASHBOARD_URL ? String(env.DASHBOARD_URL).replace(/\/+$/, '') : '';
 }
 
-async function sendCaptureAlert(env, mark, rows, bot, ctxShared) {
+// `bank`: the Bank Rate in effect at the mark per currency (same rule as the Deviation history page).
+async function sendCaptureAlert(env, mark, rows, bank, ctxShared) {
   const currencyBySymbol = Object.fromEntries(ctxShared.pairs.map(p => [p.symbol, p.currency]));
   const items = rows.map(r => {
-    const b = bot && bot.rates && bot.rates[currencyBySymbol[r.symbol]];
+    const b = bank[currencyBySymbol[r.symbol]];
+    const price = r.thbt_per_token === null || r.thbt_per_token === undefined ? null : Number(r.thbt_per_token);
     return {
       symbol: r.symbol,
-      price: r.thbt_per_token,
+      price,
       bankRate: b ? b.rate : null,
-      deviation: b && r.thbt_per_token !== null ? ctxShared.deviationPct(r.thbt_per_token, b.rate) : null,
+      deviation: b && price !== null ? ctxShared.deviationPct(price, b.rate) : null,
     };
   });
-  return sendAlert(env, `THBT prices: 6-hour capture at ${formatIct(mark)}`, items);
+  const dates = Object.values(bank).map(b => b.date).sort();
+  const rateNote = dates.length ? ` (Bank Rate of ${formatBankDate(dates[dates.length - 1])})` : '';
+  return sendAlert(env, `THBT prices: 6-hour capture at ${formatIct(mark)}${rateNote}`, items);
+}
+
+function formatBankDate(key) {
+  return new Date(`${key}T00:00:00Z`).toLocaleDateString('en-GB', { timeZone: 'UTC', day: 'numeric', month: 'short' });
+}
+
+async function storedRowsAtMark(env, mark) {
+  const iso = new Date(mark).toISOString();
+  return supabaseSelectAll(env, `select=mark_at,symbol,thbt_per_token,price_as_of,pool_id&mark_at=eq.${iso}&order=symbol`);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -511,8 +577,10 @@ export async function handleHistory(env, ctx, ctxShared, url, now = Date.now()) 
   const { fromMs, toMs } = range;
   const { pairs } = ctxShared;
 
-  const rows = await supabaseSelectAll(env,
-    `select=mark_at,symbol,thbt_per_token,price_as_of,pool_id&mark_at=gte.${new Date(fromMs).toISOString()}&mark_at=lte.${new Date(toMs).toISOString()}&order=mark_at`);
+  // Only captures on the current schedule; any from an earlier schedule are left out.
+  const rows = (await supabaseSelectAll(env,
+    `select=mark_at,symbol,thbt_per_token,price_as_of,pool_id&mark_at=gte.${new Date(fromMs).toISOString()}&mark_at=lte.${new Date(toMs).toISOString()}&order=mark_at`))
+    .filter(r => isMark(Date.parse(r.mark_at)));
 
   const expected = marksBetween(fromMs, toMs);
   const got = new Set(rows.filter(r => r.symbol === pairs[0].symbol).map(r => Date.parse(r.mark_at)));

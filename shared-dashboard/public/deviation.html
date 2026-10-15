@@ -58,7 +58,7 @@
         <div id="statusArea"></div>
 
         <div class="stage" id="stage">
-            <p class="schedule-note">Captured at 03:00, 09:00, 15:00 and 21:00 Bangkok time. Each value compares the pool price at that time with the Bank Rate in effect then. Dashed lines mark ±2% and ±4%.</p>
+            <p class="schedule-note">Captured at 18:00, 00:00, 06:00 and 12:00 Bangkok time. Each value compares the pool price at that time with the Bank Rate in effect then. Dashed lines mark ±2% and ±4%.</p>
             <div class="grid" id="charts"></div>
         </div>
 
@@ -77,7 +77,7 @@
         <div class="footnote">
             <ul>
                 <li><strong>Deviation</strong> = (Uniswap price − Bank Rate) ÷ Bank Rate, as on the Live rates page. Positive means the pool gave more THBT per token than the Bank Rate.</li>
-                <li><strong>Bank Rate</strong> is the official daily average mid rate, published around 18:00 Bangkok time on business days. Each capture uses the latest rate already published at that moment: the previous business day's rate at 09:00 and 15:00, and that day's rate at 21:00 and 03:00. USDT and USDC are compared against USD.</li>
+                <li><strong>Bank Rate</strong> is the official daily average mid rate, published around 18:00 Bangkok time on business days. Each 24-hour cycle starts at the 18:00 capture, right after the new rate comes out, and all four captures in the cycle (18:00, 00:00, 06:00, 12:00) use that rate. Weekends and holidays use the last business day's rate. USDT and USDC are compared against USD.</li>
                 <li>A gap means the pool hadn't traded yet, or no Bank Rate was available.</li>
                 <li>History is kept for the last 90 days. Newly captured prices are also posted to the team's alert channels.</li>
             </ul>

@@ -556,10 +556,31 @@ async function sendManualAlert(env, ctx, viewer) {
   return { status: 200, body: { ...data, sentAt, sent: result.sent, failed: result.failed } };
 }
 
-// Latest BOT rates, from the shared cache when it's fresh enough. Problems go into `warnings`.
+// The Bank Rate is published once per business day, around 18:00 Bangkok time (11:00 UTC).
+const BANK_PUBLISH_UTC_HOUR = 11;
+const BANK_RETRY_MS = 15 * 60 * 1000;         // after 18:00 on weekdays, re-check this often...
+const BANK_RETRY_SLACK_MS = 60 * 1000;        // a check a few seconds early still counts (crons run every 15 min)
+const BANK_RETRY_WINDOW_MS = 3 * 3600 * 1000; // ...until 21:00, or until today's rate shows up
+
+// Whether the cached Bank Rates need fetching again.
+export function bankCacheStale(bot, now) {
+  if (!bot) return true;
+  const age = now - bot.fetchedAt;
+  if (age > BOT_TTL_MS) return true;
+  const today = bangkokDateKey(new Date(now));
+  const publishedAt = Date.parse(`${today}T00:00:00Z`) + BANK_PUBLISH_UTC_HOUR * 3600 * 1000;
+  if (now < publishedAt) return false;
+  if (bot.fetchedAt < publishedAt) return true;                 // fetched before this evening's rate
+  const ictDay = new Date(now + 7 * 3600 * 1000).getUTCDay();
+  const latest = Object.values(bot.rates || {}).map(r => r.date).sort().pop() || '';
+  const weekday = ictDay >= 1 && ictDay <= 5;
+  return weekday && latest < today && now - publishedAt < BANK_RETRY_WINDOW_MS && age >= BANK_RETRY_MS - BANK_RETRY_SLACK_MS;
+}
+
+// Latest Bank Rates, from the shared cache when it's fresh enough. Problems go into `warnings`.
 async function getBotRates(env, ctx, warnings = []) {
   let bot = await cacheGet(env, 'bot');
-  if (!bot || Date.now() - bot.fetchedAt > BOT_TTL_MS) {
+  if (bankCacheStale(bot, Date.now())) {
     try {
       const fresh = await once('bot', () => fetchBotRates(env));
       // Keep previously cached rates for any currency that failed this time.
