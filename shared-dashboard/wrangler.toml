@@ -1,7 +1,7 @@
 # Cloudflare Worker config for the shared version of the price deviation dashboard.
 # See README.md in this folder for setup.
 
-name = "thbt-deviation-dashboard"
+name = "uniswap-lp-price"
 main = "src/worker.js"
 compatibility_date = "2025-09-01"
 
