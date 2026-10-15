@@ -26,10 +26,10 @@ ALLOWED_EMAIL_DOMAIN = ""    # optional, e.g. "yourcompany.com"
 # Shared cache across Cloudflare locations. Create it with:
 #   npx wrangler kv namespace create RATES_CACHE
 # then uncomment and paste the id it prints.
-# [[kv_namespaces]]
-# binding = "RATES_CACHE"
-# id = "paste-the-namespace-id-here"
+[[kv_namespaces]]
+binding = "RATES_CACHE"
+id = "paste-the-namespace-id-here"
 
-# Secrets (never put these in this file):
-#   npx wrangler secret put GRAPH_API_KEY
-#   npx wrangler secret put BOT_API_TOKEN
+Secrets (never put these in this file):
+npx wrangler secret put GRAPH_API_KEY
+npx wrangler secret put BOT_API_TOKEN
