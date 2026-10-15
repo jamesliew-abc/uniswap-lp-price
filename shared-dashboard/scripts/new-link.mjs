@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Creates a personal access link for the shared dashboard.
 //
-// Usage:  node scripts/new-link.mjs "Somchai (Treasury)" https://thbt-deviation-dashboard.<you>.workers.dev
+// Usage:  node scripts/new-link.mjs "Somchai (Treasury)" https://uniswap-lp-price.<you>.workers.dev
 //
 // Prints the line to add to the VIEWER_LINKS secret and the link to send to that person.
 // The token is 32 random characters (192 bits), so links can't be guessed.
