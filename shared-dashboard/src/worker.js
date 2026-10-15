@@ -24,6 +24,10 @@
 //   KV:       RATES_CACHE (optional but recommended), shares the cache across Cloudflare locations
 
 import { handleHistory, runScheduled, sendAlert, alertChannels, formatIct } from './history.js';
+import { runDeviationCheck } from './deviation-alerts.js';
+
+// Must match the deviation-check cron in wrangler.toml.
+const DEVIATION_CHECK_CRON = '*/5 * * * *';
 
 const SUBGRAPH_ID = 'Gqm2b5J85n1bhCyDMpGbtbVn4935EvvdyHdHrx3dibyj';
 const BOT_ENDPOINT = 'https://gateway.api.bot.or.th/Stat-ExchangeRate/v2/DAILY_AVG_EXG_RATE/';
@@ -110,6 +114,11 @@ export default {
 
   // Cron triggers (wrangler.toml): shortly after each 6-hour mark, plus a retry.
   async scheduled(event, env, ctx) {
+    if (event.cron === DEVIATION_CHECK_CRON) {
+      const result = await runDeviationCheck(env, historyContext(env, ctx), event.scheduledTime);
+      if (result.alerted || result.failed) console.log('deviation check', JSON.stringify(result));
+      return;
+    }
     const result = await runScheduled(env, historyContext(env, ctx), event.scheduledTime);
     console.log('scheduled capture', JSON.stringify(result));
   },
@@ -124,6 +133,7 @@ function historyContext(env, ctx) {
     classify,
     thresholds: { yellow: DEVIATION_YELLOW, red: DEVIATION_RED },
     getBotRates: () => getBotRates(env, ctx),
+    getLiveRates: () => getRates(env, ctx),
     fetchBankRange: (currency, startKey, endKey) => fetchBankRange(env, currency, startKey, endKey),
   };
 }

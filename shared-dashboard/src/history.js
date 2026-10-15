@@ -392,11 +392,12 @@ export function formatIct(ms) {
 
 // One line per pair, e.g. "THBT / USDC: Uniswap: 33.21, Bank Rate: 33.01, Deviation: +0.61%".
 // `items` = [{ symbol, price, bankRate, deviation }]; missing values show as "n/a".
-export function formatAlertLine({ symbol, price, bankRate, deviation }) {
+// An optional `note` is added in brackets, e.g. "(now over 2%)".
+export function formatAlertLine({ symbol, price, bankRate, deviation, note }) {
   const num = v => (v === null || v === undefined || !isFinite(v) ? 'n/a' : Number(v).toFixed(2));
   const dev = deviation === null || deviation === undefined || !isFinite(deviation)
     ? 'n/a' : `${deviation > 0 ? '+' : ''}${deviation.toFixed(2)}%`;
-  return `THBT / ${symbol}: Uniswap: ${num(price)}, Bank Rate: ${num(bankRate)}, Deviation: ${dev}`;
+  return `THBT / ${symbol}: Uniswap: ${num(price)}, Bank Rate: ${num(bankRate)}, Deviation: ${dev}${note ? ` (${note})` : ''}`;
 }
 
 // Google Chat: *bold* title and <url|label> link.

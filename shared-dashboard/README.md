@@ -163,6 +163,24 @@ flowchart LR
 4. **Optional:** set `DASHBOARD_URL` in `wrangler.toml` to the dashboard address. Alerts then include an "Open price history" link.
 5. Deploy (merge to `main`), then open **Price history** or **Deviation history** once to start the 90-day backfill.
 
+### Deviation alerts
+
+Besides the 6-hourly captures, the Worker checks the live deviation of every pair **every 5 minutes** and alerts the same channels when a pair's status changes:
+
+| When | Alert |
+|---|---|
+| A pair goes over 2% | ⚠️ `THBT / EURC: Uniswap: 38.95, Bank Rate: 38.00, Deviation: +2.50% (now over 2%)` |
+| It goes on to over 4% | ⚠️ `… (now over 4%)` |
+| It comes back within 2% | ✅ `… (back within 2%)` |
+
+- A pair that **stays** out of range doesn't alert again, so a long deviation sends one alert, not one every 5 minutes. Easing from over 4% to over 2% is recorded without an alert.
+- To stop a price sitting right at a threshold from flapping, a pair only counts as back below a threshold once it's at least **0.2 percentage points** under it (e.g. below 1.8% to be "back within 2%").
+- Several pairs changing in the same check are combined into one message.
+- If every channel fails, nothing is recorded and the alert is retried at the next check.
+- Each pair's last status is kept in the `RATES_CACHE` KV namespace, so the check needs that binding (it's already set up).
+- **Pause it** with `DEVIATION_ALERTS = "off"` in `wrangler.toml`. The thresholds are the same `DEVIATION_YELLOW` / `DEVIATION_RED` the dashboard uses.
+- **Usage:** about 290 subgraph queries a day (one per check), well within The Graph's free allowance. It uses one of Cloudflare's cron trigger slots; the free plan allows 5 per account across all your Workers, and this Worker now uses 3.
+
 ### Telegram alerts
 
 Alerts can go to a Telegram channel (or group) as well as, or instead of, Google Chat. You need the Telegram app and about 10 minutes; nobody else has to approve anything.
@@ -200,7 +218,7 @@ Supabase pauses free projects after about a week without activity. The Worker re
 - **Adding or removing someone (emailed code):** change the Access policy in Zero Trust.
 - **Rotating a key:** update the secret in the Worker's settings. It takes effect within seconds.
 - **Changing pools or thresholds:** edit `PAIRS` or `DEVIATION_RED` / `DEVIATION_YELLOW` in `src/worker.js` and push to `main`. Keep `dashboard.html` in step if you change the rules. A new pair also needs adding to the `symbol` check on the Supabase table.
-- **Alerts stopped?** Check the Worker's **Logs** around a mark: each run logs a line starting with `scheduled capture`. To move alerts to another space, replace the `GOOGLE_CHAT_WEBHOOK_URL` secret. If only one channel is failing, **Send alert** shows that channel's error.
+- **Alerts stopped?** Check the Worker's **Logs** around a mark: each run logs a line starting with `scheduled capture`. Deviation checks log a `deviation check` line whenever they send (or fail to send) an alert. To move alerts to another space, replace the `GOOGLE_CHAT_WEBHOOK_URL` secret. If only one channel is failing, **Send alert** shows that channel's error.
 - **Local testing:** `npx wrangler dev --var ALLOW_UNAUTHENTICATED:true` with a `.dev.vars` file holding the two keys. Never set `ALLOW_UNAUTHENTICATED` on the deployed Worker.
 
 ## Limitations
