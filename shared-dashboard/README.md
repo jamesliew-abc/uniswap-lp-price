@@ -116,7 +116,7 @@ Nothing needs carrying over from an old setup. The 90 days of price history are 
 - [ ] Live rates shows all five pairs with a Bank Rate and deviation.
 - [ ] Price history and Deviation history show 7 days of captures with no "still missing" message.
 - [ ] **Send alert** reports "Sent to Google Chat and Telegram" (or whichever you set up).
-- [ ] The next 6-hour capture (09:00, 15:00, 21:00 or 03:00 Bangkok time) posts an alert, and the Worker's **Logs** show a `scheduled capture` line.
+- [ ] The next 6-hour capture (18:00, 00:00, 06:00 or 12:00 Bangkok time) posts an alert, and the Worker's **Logs** show a `scheduled capture` line.
 
 ### Removing the old setup
 
@@ -208,7 +208,7 @@ If your company's email filter holds the code emails, ask IT to allow mail from 
 
 **Bank Rate** throughout the dashboard means the Bank of Thailand's Daily Average Exchange Rate mid rate.
 
-The **Price history** page shows each pair's THBT price at fixed 6-hour marks: **03:00, 09:00, 15:00 and 21:00 Bangkok time**. It opens on the last 7 days, with quick switches for 1, 2 and 3 days and a custom range of up to 90 days.
+The **Price history** page shows each pair's THBT price at fixed 6-hour marks: **18:00, 00:00, 06:00 and 12:00 Bangkok time**. The day starts at 18:00 because that's when the new Bank Rate is published. It opens on the last 7 days, with quick switches for 1, 2 and 3 days and a custom range of up to 90 days.
 
 The **Deviation history** page uses the same captures and date ranges, but shows each pair's deviation from the Bank Rate at each mark. Dashed lines mark ±2% and ±4%, each card counts how often the pair went over them, and the table and CSV include the Uniswap price and Bank Rate behind every value.
 
@@ -225,18 +225,20 @@ flowchart LR
 ```
 
 - **What's stored:** for each mark and pair, the pool price right after the last swap before that time. It uses the same formula as the Live rates page, applied to the swap's recorded price, so live captures and backfilled history match exactly.
-- **When:** cron triggers at 1 and 15 minutes past each mark (UTC 02:00, 08:00, 14:00, 20:00). The second run only does anything if the first couldn't capture the mark, for example because the subgraph was still catching up.
+- **When:** cron triggers at 1 and 15 minutes past each mark (UTC 11:00, 17:00, 23:00, 05:00). Each run refreshes the stored Bank Rates first. The second run only does anything if the first couldn't capture the mark (for example, the subgraph was still catching up) or held back the 18:00 alert (below).
 - **Backfill:** missing marks from the last 90 days are filled in automatically, up to 120 marks a run, by the cron and when someone opens the history page. The first visit fills the full 90 days in about a minute.
-- **Which Bank Rate a capture uses:** the latest one already published at that moment. The Bank of Thailand publishes each business day's rate around 18:00 Bangkok time, so the 09:00 and 15:00 captures use the previous business day's rate, and the 21:00 and 03:00 captures use that day's. Weekends and holidays use the last business day. Bank Rates are stored in Supabase (`thbt_bank_rates`) and kept up to date by the cron.
+- **Which Bank Rate a capture uses:** the rate is published around 18:00 Bangkok time on business days, so each 24-hour cycle starts with the 18:00 capture, and all four captures in it (18:00, 00:00, 06:00, 12:00) use that day's rate. Weekends and holidays use the last business day's rate.
+- **The 18:00 alert waits for the new rate.** On weekdays, if that day's Bank Rate isn't out yet at 18:01, the alert is held and sent by the 18:15 run (with the new rate if it has appeared by then; otherwise with the latest one). Each capture alert names the Bank Rate date it used.
+- **Live dashboard:** after 18:00 on weekdays it re-checks every 5 minutes (until 21:00) until the new rate appears, instead of waiting for its usual 3-hour refresh. Bank Rates are stored in Supabase (`thbt_bank_rates`) and kept up to date by the cron.
 - **Alert:** when a mark is captured, the Worker posts the five prices to every alert channel that's set up (Google Chat and/or Telegram). Backfilled marks don't trigger alerts. Each pair is one line:
 
   ```
-  *THBT prices: 6-hour capture at 15 Oct 2026, 09:00 ICT*
+  *THBT prices: 6-hour capture at 15 Oct 2026, 18:00 ICT (Bank Rate of 15 Oct)*
   THBT / USDC: Uniswap: 33.21, Bank Rate: 33.01, Deviation: +0.61%
   ```
 
 - **Send alert button** (Live rates page): posts the prices as of that moment to every alert channel, in the same format, with the sender's name in the title. If one channel fails, the others still get it and the page says which failed. Prices are fetched fresh, not from the 3-minute cache, and nothing is saved to the price history. To avoid double posts, it can be used once a minute across everyone.
-- **Storage:** Supabase tables `public.thbt_price_marks` and `public.thbt_bank_rates` in "jamesliew-abc's Project". Row level security is on with no policies, so only the Worker's secret key can read or write it.
+- **Storage:** Supabase tables `public.thbt_price_marks` and `public.thbt_bank_rates` in "jamesliew-abc's Project". Captures from the earlier schedule (09:00, 15:00, 21:00, 03:00) stay in the table but are ignored. To remove them, run `delete from public.thbt_price_marks where extract(hour from mark_at at time zone 'UTC') not in (5, 11, 17, 23);` in the SQL Editor. Row level security is on with no policies, so only the Worker's secret key can read or write it.
 
 ### Setup
 
