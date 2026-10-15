@@ -347,7 +347,10 @@
                 : '';
         }
 
-        class SessionExpired extends Error {}
+        // Access ended: either the sign-in session expired (access mode) or the link was turned off (link mode).
+        class SessionExpired extends Error {
+            constructor(message, canSignIn) { super(message); this.canSignIn = canSignIn; }
+        }
 
         async function loadRates() {
             let res;
@@ -357,9 +360,13 @@
             } catch (e) {
                 throw new Error('Network error. Check your connection.');
             }
-            if (res.type === 'opaqueredirect' || res.status === 401 || res.status === 403) throw new SessionExpired();
+            if (res.type === 'opaqueredirect') throw new SessionExpired('Your sign-in has expired.', true);
             let body;
-            try { body = await res.json(); } catch (e) { throw new SessionExpired(); }
+            try { body = await res.json(); } catch (e) { throw new SessionExpired('Your sign-in has expired.', true); }
+            if (res.status === 401 || res.status === 403) {
+                if (body.authMode === 'link') throw new SessionExpired('Your access link has been turned off. Ask the dashboard owner for a new link.', false);
+                throw new SessionExpired('Your sign-in has expired.', true);
+            }
             if (!res.ok) throw new Error(body.error || `Server returned HTTP ${res.status}`);
             return body;
         }
@@ -382,7 +389,7 @@
                 showStatus(data.warnings || []);
             } catch (err) {
                 if (err instanceof SessionExpired) {
-                    showStatus(['Your sign-in has expired.'], { reload: true });
+                    showStatus([err.message], { reload: err.canSignIn });
                     nextRefreshAt = null;
                     clearTimeout(timer);
                     updateCountdown();
