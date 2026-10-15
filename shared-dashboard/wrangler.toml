@@ -1,0 +1,35 @@
+# Cloudflare Worker config for the shared (sign-in) version of the price deviation dashboard.
+# See README.md in this folder for setup.
+
+name = "thbt-deviation-dashboard"
+main = "src/worker.js"
+compatibility_date = "2025-09-01"
+
+# Don't publish per-version preview URLs: they would sit outside the Access application.
+preview_urls = false
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+# Run the Worker (and its Access check) before serving the page, so nothing is served unchecked.
+run_worker_first = true
+
+[vars]
+# Fill these in after creating the Access application (README step 4) and commit them. They
+# aren't secret. Set them here rather than in the Cloudflare dashboard, because each deploy
+# replaces dashboard values with what's in this file. Until they're filled in, the Worker
+# refuses every request.
+ACCESS_TEAM_DOMAIN = ""      # e.g. "yourteam.cloudflareaccess.com"
+ACCESS_AUD = ""              # Application Audience (AUD) tag
+ALLOWED_EMAIL_DOMAIN = ""    # optional, e.g. "yourcompany.com"
+
+# Shared cache across Cloudflare locations. Create it with:
+#   npx wrangler kv namespace create RATES_CACHE
+# then uncomment and paste the id it prints.
+# [[kv_namespaces]]
+# binding = "RATES_CACHE"
+# id = "paste-the-namespace-id-here"
+
+# Secrets (never put these in this file):
+#   npx wrangler secret put GRAPH_API_KEY
+#   npx wrangler secret put BOT_API_TOKEN

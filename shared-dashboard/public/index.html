@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>THBT Price Deviation Dashboard</title>
+    <style>
+        :root {
+            /* Brand colours shared with index.html */
+            --brand-1: #667eea;
+            --brand-2: #764ba2;
+            --ink: #1f2430;
+            --muted: #6b7180;
+            --line: #e6e8ef;
+            --surface: #ffffff;
+            --surface-2: #f6f7fb;
+
+            /* Deviation states */
+            --ok-bg: #e9f7ef;     --ok-ink: #1d6b3d;     --ok-dot: #2ea862;
+            --warn-bg: #fff6d6;   --warn-ink: #7a5800;   --warn-dot: #e0a800;
+            --crit-bg: #fde4e4;   --crit-ink: #9b1c1c;   --crit-dot: #dc3545;
+            --none-bg: #f1f2f6;   --none-ink: #5c6170;   --none-dot: #a3a8b5;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, var(--brand-1) 0%, var(--brand-2) 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: var(--ink);
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: var(--surface);
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, var(--brand-1) 0%, var(--brand-2) 100%);
+            color: #fff;
+            padding: 24px 30px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px 24px;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .header h1 { font-size: 1.6em; text-wrap: balance; }
+        .header p { opacity: 0.9; margin-top: 4px; font-size: 14px; }
+        .viewer { font-size: 13px; opacity: 0.9; overflow-wrap: anywhere; }
+        .header nav a {
+            color: #fff;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 14px;
+            padding: 8px 14px;
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            border-radius: 8px;
+            white-space: nowrap;
+        }
+        .header nav a:hover { background: rgba(255, 255, 255, 0.15); }
+
+        /* Toolbar: refresh controls + last-updated */
+        .toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 12px 20px;
+            padding: 18px 30px;
+            background: var(--surface-2);
+            border-bottom: 1px solid var(--line);
+        }
+        .toolbar .spacer { flex: 1; }
+        .meta { font-size: 13px; color: var(--muted); display: grid; gap: 2px; }
+        .meta strong { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+        button {
+            font: inherit;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            border-radius: 8px;
+            padding: 10px 20px;
+            background: linear-gradient(135deg, var(--brand-1) 0%, var(--brand-2) 100%);
+            color: #fff;
+            transition: transform 0.15s, box-shadow 0.15s;
+        }
+        button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4); }
+        button:disabled { opacity: 0.6; cursor: not-allowed; }
+        button.secondary {
+            background: var(--surface);
+            color: var(--brand-2);
+            border: 1px solid var(--line);
+        }
+        button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible {
+            outline: 3px solid rgba(102, 126, 234, 0.5);
+            outline-offset: 2px;
+        }
+
+        label { font-size: 13px; font-weight: 600; color: #495057; }
+        select, input[type="text"], input[type="password"] {
+            font: inherit;
+            font-size: 14px;
+            padding: 9px 12px;
+            border: 1px solid #cfd4de;
+            border-radius: 8px;
+            background: var(--surface);
+            color: var(--ink);
+        }
+        .inline-field { display: flex; align-items: center; gap: 8px; }
+
+        /* Summary chips */
+        .summary {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            padding: 20px 30px 0;
+        }
+        .chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            border-radius: 999px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        .chip .dot { width: 8px; height: 8px; border-radius: 50%; }
+        .chip.crit { background: var(--crit-bg); color: var(--crit-ink); }  .chip.crit .dot { background: var(--crit-dot); }
+        .chip.warn { background: var(--warn-bg); color: var(--warn-ink); }  .chip.warn .dot { background: var(--warn-dot); }
+        .chip.ok   { background: var(--ok-bg);   color: var(--ok-ink); }    .chip.ok .dot   { background: var(--ok-dot); }
+        .chip.none { background: var(--none-bg); color: var(--none-ink); }  .chip.none .dot { background: var(--none-dot); }
+
+        .status-msg {
+            margin: 16px 30px 0;
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        .status-msg.error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .status-msg .reload { margin-top: 10px; }
+        .status-msg.info  { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+
+        /* Main table */
+        .table-wrap { overflow-x: auto; padding: 20px 30px 10px; }
+        table { width: 100%; border-collapse: collapse; min-width: 760px; }
+        th {
+            text-align: left;
+            font-size: 12px;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: var(--muted);
+            font-weight: 600;
+            padding: 10px 14px;
+            border-bottom: 2px solid var(--line);
+            white-space: nowrap;
+        }
+        th.num, td.num { text-align: right; }
+        td {
+            padding: 14px;
+            border-bottom: 1px solid var(--line);
+            font-size: 14px;
+            vertical-align: middle;
+        }
+        td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+        td .sub { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
+        td.pair { font-weight: 700; white-space: nowrap; }
+        td.pair a { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--muted); }
+        td.pair a:hover { color: var(--brand-2); }
+
+        tr.crit td { background: var(--crit-bg); }
+        tr.warn td { background: var(--warn-bg); }
+        tr.crit td:first-child { box-shadow: inset 4px 0 0 var(--crit-dot); }
+        tr.warn td:first-child { box-shadow: inset 4px 0 0 var(--warn-dot); }
+        tr.crit .dev { color: var(--crit-ink); font-weight: 700; }
+        tr.warn .dev { color: var(--warn-ink); font-weight: 700; }
+
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 3px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+        .pill.crit { background: var(--crit-dot); color: #fff; }
+        .pill.warn { background: var(--warn-dot); color: #3d2c00; }
+        .pill.ok   { background: var(--ok-bg); color: var(--ok-ink); }
+        .pill.none { background: var(--none-bg); color: var(--none-ink); }
+
+        .empty { padding: 40px 14px; text-align: center; color: var(--muted); }
+
+        .footnote {
+            padding: 10px 30px 26px;
+            font-size: 13px;
+            color: var(--muted);
+            line-height: 1.6;
+        }
+        .footnote ul { padding-left: 18px; }
+
+        @media (max-width: 600px) {
+            body { padding: 0; }
+            .container { border-radius: 0; }
+            .header, .toolbar, .summary, .table-wrap, .footnote {
+                padding-left: 16px; padding-right: 16px;
+            }
+            .status-msg { margin-left: 16px; margin-right: 16px; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            button { transition: none; }
+            button:hover:not(:disabled) { transform: none; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <div>
+                <h1>THBT Price Deviation Dashboard</h1>
+                <p>Live Uniswap v4 pool prices on Base vs. the Bank of Thailand daily average rate</p>
+            </div>
+            <div class="viewer" id="viewer"></div>
+        </header>
+
+        <div class="toolbar">
+            <button id="refreshBtn" type="button">Refresh now</button>
+            <div class="inline-field">
+                <label for="intervalSelect">Auto-refresh</label>
+                <select id="intervalSelect">
+                    <option value="5">Every 5 min</option>
+                    <option value="10">Every 10 min</option>
+                    <option value="15">Every 15 min</option>
+                    <option value="30">Every 30 min</option>
+                    <option value="60">Every 60 min</option>
+                    <option value="0">Off</option>
+                </select>
+            </div>
+            <div class="spacer"></div>
+            <div class="meta">
+                <span>Pool prices as of: <strong id="lastUpdated">loading…</strong></span>
+                <span>Next refresh: <strong id="nextRefresh">–</strong></span>
+            </div>
+        </div>
+
+        <div class="summary" id="summary" aria-live="polite"></div>
+        <div id="statusArea"></div>
+
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Pair</th>
+                        <th class="num">Uniswap rate<br>(THBT per 1 token)</th>
+                        <th class="num">BOT rate<br>(THB per 1 unit)</th>
+                        <th class="num">Deviation</th>
+                        <th>Status</th>
+                        <th>Last swap</th>
+                    </tr>
+                </thead>
+                <tbody id="rateBody">
+                    <tr><td colspan="6" class="empty">Loading the latest rates…</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="footnote">
+            <ul>
+                <li><strong>Deviation</strong> = (Uniswap rate − BOT rate) ÷ BOT rate, treating 1 THBT as 1 THB. Positive means the pool gives more THBT per token than the BOT rate.</li>
+                <li><strong>Thresholds:</strong> red when the absolute deviation is more than 4%, yellow when it is more than 2%.</li>
+                <li><strong>BOT rate</strong> is the Daily Average Exchange Rate mid rate, published once per business day. On weekends and holidays the most recent published rate is used, and its date is shown under the rate. USDT and USDC are both compared against USD.</li>
+                <li><strong>Uniswap rate</strong> is each pool's current price from the Uniswap v4 subgraph. Prices are shared by everyone viewing this page and are at most a few minutes old.</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        const $ = id => document.getElementById(id);
+        const INTERVAL_KEY = 'shared_dashboard_refresh_minutes';
+        const STATUS_LABEL = { crit: 'Over 4%', warn: 'Over 2%', ok: 'Within 2%', none: 'No data' };
+
+        function storageGet(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
+        function storageSet(key, value) { try { localStorage.setItem(key, value); } catch (e) { /* storage unavailable */ } }
+
+        function escapeHtml(s) {
+            return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+        function formatRate(n) {
+            if (n === undefined || n === null || !isFinite(n)) return '–';
+            return n.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+        }
+        function formatDateTime(ms) {
+            return new Date(ms).toLocaleString('en-GB', {
+                timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short', year: 'numeric',
+                hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+            }) + ' ICT';
+        }
+        function formatBotDate(key) {
+            return new Date(key + 'T00:00:00Z').toLocaleDateString('en-GB', { timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+        }
+        function formatAgo(unixSeconds, now) {
+            if (!unixSeconds) return 'no swaps found';
+            const mins = Math.max(0, Math.round((now - unixSeconds * 1000) / 60000));
+            if (mins < 1) return 'just now';
+            if (mins < 60) return `${mins} min ago`;
+            const hours = Math.floor(mins / 60);
+            if (hours < 24) return `${hours} h ago`;
+            const days = Math.floor(hours / 24);
+            return `${days} day${days === 1 ? '' : 's'} ago`;
+        }
+
+        function renderRows(rows) {
+            const now = Date.now();
+            $('rateBody').innerHTML = rows.map(r => {
+                const devText = r.deviation === null ? '–' : `${r.deviation > 0 ? '+' : ''}${r.deviation.toFixed(2)}%`;
+                const poolLink = `https://app.uniswap.org/explore/pools/base/${encodeURIComponent(r.poolId)}`;
+                return `<tr class="${escapeHtml(r.state)}">
+                    <td class="pair"><a href="${poolLink}" target="_blank" rel="noopener">THBT / ${escapeHtml(r.symbol)}</a>
+                        <span class="sub">vs BOT ${escapeHtml(r.currency)}</span></td>
+                    <td class="num">${formatRate(r.poolRate)}</td>
+                    <td class="num">${formatRate(r.botRate)}<span class="sub">${r.botDate ? escapeHtml(formatBotDate(r.botDate)) : 'not available'}</span></td>
+                    <td class="num dev">${devText}</td>
+                    <td><span class="pill ${escapeHtml(r.state)}">${STATUS_LABEL[r.state] || 'No data'}</span></td>
+                    <td>${escapeHtml(formatAgo(r.lastSwap, now))}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        function renderSummary(rows) {
+            const count = s => rows.filter(r => r.state === s).length;
+            const chips = [['crit', `${count('crit')} over 4%`], ['warn', `${count('warn')} over 2%`], ['ok', `${count('ok')} within 2%`]];
+            if (count('none')) chips.push(['none', `${count('none')} no data`]);
+            $('summary').innerHTML = chips.map(([s, text]) => `<span class="chip ${s}"><span class="dot"></span>${text}</span>`).join('');
+        }
+
+        function showStatus(messages, { reload = false } = {}) {
+            $('statusArea').innerHTML = messages.length
+                ? `<div class="status-msg error">${messages.map(escapeHtml).join('<br>')}${reload ? '<div class="reload"><button type="button" onclick="location.reload()">Sign in again</button></div>' : ''}</div>`
+                : '';
+        }
+
+        class SessionExpired extends Error {}
+
+        async function loadRates() {
+            let res;
+            try {
+                // Access answers an expired session with a redirect to the sign-in page; don't follow it.
+                res = await fetch('/api/rates', { redirect: 'manual', cache: 'no-store', credentials: 'same-origin' });
+            } catch (e) {
+                throw new Error('Network error. Check your connection.');
+            }
+            if (res.type === 'opaqueredirect' || res.status === 401 || res.status === 403) throw new SessionExpired();
+            let body;
+            try { body = await res.json(); } catch (e) { throw new SessionExpired(); }
+            if (!res.ok) throw new Error(body.error || `Server returned HTTP ${res.status}`);
+            return body;
+        }
+
+        let refreshing = false;
+        let timer = null;
+        let nextRefreshAt = null;
+
+        async function refresh() {
+            if (refreshing) return;
+            refreshing = true;
+            $('refreshBtn').disabled = true;
+            $('refreshBtn').textContent = 'Refreshing…';
+            try {
+                const data = await loadRates();
+                renderRows(data.rows);
+                renderSummary(data.rows);
+                $('lastUpdated').textContent = formatDateTime(data.poolsFetchedAt);
+                $('viewer').textContent = data.viewer ? `Signed in as ${data.viewer}` : '';
+                showStatus(data.warnings || []);
+            } catch (err) {
+                if (err instanceof SessionExpired) {
+                    showStatus(['Your sign-in has expired.'], { reload: true });
+                    nextRefreshAt = null;
+                    clearTimeout(timer);
+                    updateCountdown();
+                    return;
+                }
+                showStatus([`Couldn't load the latest rates: ${err.message} The table shows the last successful refresh.`]);
+            } finally {
+                refreshing = false;
+                $('refreshBtn').disabled = false;
+                $('refreshBtn').textContent = 'Refresh now';
+            }
+            scheduleNext();
+        }
+
+        function intervalMinutes() { return parseInt($('intervalSelect').value, 10) || 0; }
+
+        function scheduleNext() {
+            clearTimeout(timer);
+            const mins = intervalMinutes();
+            if (!mins) { nextRefreshAt = null; updateCountdown(); return; }
+            nextRefreshAt = Date.now() + mins * 60000;
+            timer = setTimeout(refresh, mins * 60000);
+            updateCountdown();
+        }
+
+        function updateCountdown() {
+            if (!nextRefreshAt) { $('nextRefresh').textContent = intervalMinutes() ? '–' : 'auto-refresh off'; return; }
+            const s = Math.max(0, Math.round((nextRefreshAt - Date.now()) / 1000));
+            $('nextRefresh').textContent = `in ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+        }
+        setInterval(updateCountdown, 1000);
+
+        // Browsers throttle timers in background tabs; catch up as soon as the tab is visible again.
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && nextRefreshAt && Date.now() >= nextRefreshAt) refresh();
+        });
+
+        const saved = storageGet(INTERVAL_KEY);
+        if (saved !== null && [...$('intervalSelect').options].some(o => o.value === saved)) $('intervalSelect').value = saved;
+        else $('intervalSelect').value = '10';
+        $('intervalSelect').addEventListener('change', () => { storageSet(INTERVAL_KEY, $('intervalSelect').value); scheduleNext(); });
+        $('refreshBtn').addEventListener('click', refresh);
+
+        refresh();
+    </script>
+</body>
+</html>
