@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>THBT Price History</title>
+    <link rel="stylesheet" href="/theme.css">
+    <style>
+        .viz-root {
+            --series-1: #eb6834;      /* validated categorical slot (orange); one series per chart */
+            --grid: #efe6df;
+            --axis-ink: #6b6f7b;
+        }
+
+        /* Range selector: segmented presets + custom dates, one row above the charts */
+        .range { display: inline-flex; background: #fff; border: 1px solid var(--peach-2); border-radius: 12px; padding: 3px; gap: 2px; }
+        .range button {
+            background: transparent; color: var(--muted); font-weight: 600;
+            padding: 7px 14px; border-radius: 9px; box-shadow: none;
+        }
+        .range button:hover:not(:disabled) { transform: none; box-shadow: none; color: var(--ink); background: var(--surface-2); }
+        .range button[aria-pressed="true"] { background: linear-gradient(135deg, var(--brand-strong) 0%, var(--brand-deep) 100%); color: #fff; }
+        .custom { display: none; flex-wrap: wrap; align-items: end; gap: 10px 12px; }
+        .custom.open { display: flex; }
+        .custom .field { display: grid; gap: 4px; }
+        .custom .hint { font-size: 12px; color: var(--muted); align-self: center; }
+        .range-error { color: #8a1c1c; font-size: 13px; width: 100%; }
+        .range-error:empty { display: none; }
+
+        .stage { padding: 20px 30px 6px; transition: opacity 0.2s; }
+        .stage.loading { opacity: 0.55; }
+        .schedule-note { font-size: 13px; color: var(--muted); margin-bottom: 14px; }
+
+        /* Small multiples: one chart per pair (each pair has its own price scale) */
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 460px), 1fr)); gap: 16px; }
+        .card {
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            padding: 16px 16px 8px;
+            background: #fff;
+            min-width: 0;
+        }
+        .card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+        .card h2 { font-size: 15px; font-weight: 700; }
+        .card h2 .sub { font-weight: 400; color: var(--muted); font-size: 13px; margin-left: 6px; }
+        .latest { text-align: right; }
+        .latest .value { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+        .latest .change { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+        .chart { position: relative; margin-top: 8px; height: 190px; outline: none; border-radius: 8px; }
+        .chart:focus-visible { box-shadow: 0 0 0 3px rgba(242, 106, 27, 0.35); }
+        .chart svg { display: block; width: 100%; height: 100%; overflow: visible; }
+        .chart .no-data { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 13px; }
+
+        .tooltip {
+            position: absolute; top: 0; pointer-events: none;
+            background: #fff; border: 1px solid var(--line); border-radius: 10px;
+            box-shadow: 0 6px 18px rgba(80, 40, 10, 0.12);
+            padding: 8px 10px; font-size: 12px; white-space: nowrap; z-index: 2;
+            display: none;
+        }
+        .tooltip .tv { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ink); }
+        .tooltip .key { width: 12px; height: 2px; border-radius: 2px; background: var(--series-1); }
+        .tooltip .tt, .tooltip .ta { color: var(--muted); margin-top: 2px; }
+
+        .table-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 22px 30px 0; }
+        .table-head h2 { font-size: 16px; }
+        .history-table { min-width: 640px; }
+        .history-table td, .history-table th { padding: 10px 14px; }
+        .history-table td.gap { color: var(--muted); }
+
+        @media (max-width: 600px) {
+            .stage, .table-head { padding-left: 16px; padding-right: 16px; }
+            .chart { height: 170px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container viz-root">
+        <header class="header">
+            <div class="brand-row">
+                <span class="coin" aria-hidden="true">฿</span>
+                <div>
+                    <h1>THBT Price History</h1>
+                    <p>Uniswap v4 pool prices on Base, captured every 6 hours</p>
+                </div>
+            </div>
+            <div class="viewer" id="viewer"></div>
+        </header>
+
+        <nav class="tabs" aria-label="Pages">
+            <a href="/">Live rates</a>
+            <a href="/history.html" aria-current="page">Price history</a>
+        </nav>
+
+        <div class="toolbar">
+            <div class="range" role="group" aria-label="Date range">
+                <button type="button" data-days="1">1D</button>
+                <button type="button" data-days="2">2D</button>
+                <button type="button" data-days="3">3D</button>
+                <button type="button" data-days="7">7D</button>
+                <button type="button" data-days="custom">Custom</button>
+            </div>
+            <form class="custom" id="customForm">
+                <div class="field">
+                    <label for="fromDate">From</label>
+                    <input type="date" id="fromDate" required>
+                </div>
+                <div class="field">
+                    <label for="toDate">To</label>
+                    <input type="date" id="toDate" required>
+                </div>
+                <button type="submit" class="secondary">Apply</button>
+                <span class="hint">Up to 90 days back, 90 days at most.</span>
+                <div class="range-error" id="rangeError" role="alert"></div>
+            </form>
+            <div class="spacer"></div>
+            <div class="meta">
+                <span>Showing: <strong id="rangeLabel">–</strong></span>
+                <span>Captures: <strong id="captureCount">–</strong></span>
+            </div>
+        </div>
+
+        <div id="statusArea"></div>
+
+        <div class="stage" id="stage">
+            <p class="schedule-note">Captured at 03:00, 09:00, 15:00 and 21:00 Bangkok time. Each value is the pool's THBT price per 1 token right after the last trade before that time.</p>
+            <div class="grid" id="charts"></div>
+        </div>
+
+        <div class="table-head">
+            <h2>All captures</h2>
+            <button type="button" class="secondary" id="csvBtn" disabled>Download CSV</button>
+        </div>
+        <div class="table-wrap">
+            <table class="history-table">
+                <thead id="tableHead"></thead>
+                <tbody id="tableBody"><tr><td class="empty">Loading…</td></tr></tbody>
+            </table>
+        </div>
+
+        <div class="footnote">
+            <ul>
+                <li><strong>Price</strong> is THBT per 1 token, worked out the same way as on the Live rates page. A gap means the pool hadn't traded yet at that time.</li>
+                <li>History is kept for the last 90 days. Newly captured prices also go to the team's Google Chat space.</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        const $ = id => document.getElementById(id);
+        const DAY_MS = 86400000;
+        const ICT_OFFSET_MS = 7 * 3600000;
+        const MAX_DAYS = 90;
+        const RANGE_KEY = 'history_range_days';
+
+        function storageGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+        function storageSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* storage unavailable */ } }
+
+        // --- formatting (Bangkok time) ---
+        const fmt = (ms, opts) => new Date(ms).toLocaleString('en-GB', { timeZone: 'Asia/Bangkok', hour12: false, ...opts });
+        const fmtFull = ms => fmt(ms, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) + ' ICT';
+        const fmtDay = ms => fmt(ms, { day: 'numeric', month: 'short' });
+        const fmtDayTime = ms => fmt(ms, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+        const fmtPrice = n => n === null || !isFinite(n) ? '–' : n.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+        // yyyy-mm-dd of a moment, in Bangkok time
+        const ictDateKey = ms => new Date(ms + ICT_OFFSET_MS).toISOString().slice(0, 10);
+        // ms of 00:00 Bangkok time on a yyyy-mm-dd
+        const ictMidnight = key => Date.parse(key + 'T00:00:00Z') - ICT_OFFSET_MS;
+
+        // --- state ---
+        let current = null;          // { days } or { from, to }
+        let lastData = null;
+        let pollTimer = null;
+        let pollCount = 0;
+        let requestSeq = 0;
+
+        function showStatus(type, text) {
+            const area = $('statusArea');
+            area.textContent = '';
+            if (!text) return;
+            const div = document.createElement('div');
+            div.className = `status-msg ${type}`;
+            div.textContent = text;
+            area.appendChild(div);
+        }
+
+        function rangeFor(sel, now) {
+            if (sel.days) return { from: now - sel.days * DAY_MS, to: now };
+            return { from: sel.from, to: sel.to };
+        }
+
+        // --- range controls ---
+        function setPressed(value) {
+            document.querySelectorAll('.range button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.days === value)));
+            $('customForm').classList.toggle('open', value === 'custom');
+        }
+
+        function initCustomInputs() {
+            const now = Date.now();
+            const minKey = ictDateKey(now - MAX_DAYS * DAY_MS);
+            const maxKey = ictDateKey(now);
+            ['fromDate', 'toDate'].forEach(id => { $(id).min = minKey; $(id).max = maxKey; });
+            if (!$('toDate').value) $('toDate').value = maxKey;
+            if (!$('fromDate').value) $('fromDate').value = ictDateKey(now - 7 * DAY_MS);
+        }
+
+        document.querySelectorAll('.range button').forEach(b => b.addEventListener('click', () => {
+            const v = b.dataset.days;
+            setPressed(v);
+            if (v === 'custom') { initCustomInputs(); $('fromDate').focus(); return; }
+            $('rangeError').textContent = '';
+            storageSet(RANGE_KEY, v);
+            select({ days: Number(v) });
+        }));
+
+        $('customForm').addEventListener('submit', e => {
+            e.preventDefault();
+            const now = Date.now();
+            const fromKey = $('fromDate').value, toKey = $('toDate').value;
+            if (!fromKey || !toKey) { $('rangeError').textContent = 'Pick both dates.'; return; }
+            const earliest = now - MAX_DAYS * DAY_MS;
+            let from = ictMidnight(fromKey);
+            const to = Math.min(ictMidnight(toKey) + DAY_MS - 1, now);
+            if (ictMidnight(fromKey) + DAY_MS <= earliest) { $('rangeError').textContent = `History only goes back ${MAX_DAYS} days (to ${fmtDay(earliest)}).`; return; }
+            if (from > to) { $('rangeError').textContent = 'The start date must be on or before the end date.'; return; }
+            from = Math.max(from, earliest);
+            if (to - from > MAX_DAYS * DAY_MS) { $('rangeError').textContent = `Pick a range of at most ${MAX_DAYS} days.`; return; }
+            $('rangeError').textContent = '';
+            storageSet(RANGE_KEY, '7');
+            select({ from, to });
+        });
+
+        // --- data ---
+        class SessionExpired extends Error {}
+
+        async function fetchHistory(from, to) {
+            const qs = new URLSearchParams({ from: new Date(from).toISOString(), to: new Date(to).toISOString() });
+            let res;
+            try {
+                res = await fetch('/api/history?' + qs, { redirect: 'manual', cache: 'no-store', credentials: 'same-origin' });
+            } catch (e) { throw new Error('Network error. Check your connection.'); }
+            if (res.type === 'opaqueredirect') throw new SessionExpired('Your sign-in has expired. Reload the page to sign in again.');
+            let body;
+            try { body = await res.json(); } catch (e) { throw new SessionExpired('Your sign-in has expired. Reload the page to sign in again.'); }
+            if (res.status === 401 || res.status === 403) {
+                throw new SessionExpired(body.authMode === 'link'
+                    ? 'Your access link has been turned off. Ask the dashboard owner for a new link.'
+                    : 'Your sign-in has expired. Reload the page to sign in again.');
+            }
+            if (!res.ok) throw new Error(body.error || `Server returned HTTP ${res.status}`);
+            return body;
+        }
+
+        async function select(sel) {
+            current = sel;
+            clearTimeout(pollTimer);
+            pollCount = 0;
+            await load();
+        }
+
+        async function load() {
+            const seq = ++requestSeq;
+            const { from, to } = rangeFor(current, Date.now());
+            $('stage').classList.add('loading');
+            try {
+                const data = await fetchHistory(from, to);
+                if (seq !== requestSeq) return;      // a newer range was picked meanwhile
+                lastData = data;
+                $('viewer').textContent = data.viewer ? `Signed in as ${data.viewer}` : '';
+                render(data);
+                if (data.backfilling && pollCount < 30) {
+                    showStatus('info', `Filling in older history (${data.missingMarks} of ${data.expectedMarks} captures still to load). This page updates by itself; it takes about a minute.`);
+                    pollCount++;
+                    pollTimer = setTimeout(load, 8000);
+                } else if (data.missingMarks) {
+                    showStatus('info', `${data.missingMarks} capture${data.missingMarks === 1 ? ' is' : 's are'} still missing in this range. They'll be filled in at the next scheduled capture.`);
+                } else {
+                    showStatus('', '');
+                }
+            } catch (err) {
+                if (seq !== requestSeq) return;
+                showStatus('error', err instanceof SessionExpired ? err.message : `Couldn't load price history: ${err.message}`);
+            } finally {
+                if (seq === requestSeq) $('stage').classList.remove('loading');
+            }
+        }
+
+        // --- rendering ---
+        function render(data) {
+            const total = Object.values(data.series).reduce((n, s) => Math.max(n, s.length), 0);
+            $('rangeLabel').textContent = `${fmtDayTime(data.from)} – ${fmtDayTime(data.to)} ICT`;
+            $('captureCount').textContent = `${total} per pair`;
+            renderCharts(data);
+            renderTable(data);
+        }
+
+        function niceTicks(min, max, count) {
+            if (min === max) { const pad = Math.abs(min) * 0.002 || 0.01; min -= pad; max += pad; }
+            const span = max - min;
+            const step0 = span / count;
+            const mag = Math.pow(10, Math.floor(Math.log10(step0)));
+            const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= step0) || 10 * mag;
+            const lo = Math.floor(min / step) * step, hi = Math.ceil(max / step) * step;
+            const ticks = [];
+            for (let v = lo; v <= hi + step / 2; v += step) ticks.push(+v.toFixed(10));
+            return { lo, hi, ticks, step };
+        }
+
+        const SVG_NS = 'http://www.w3.org/2000/svg';
+        const el = (name, attrs = {}, parent) => {
+            const n = document.createElementNS(SVG_NS, name);
+            Object.entries(attrs).forEach(([k, v]) => n.setAttribute(k, v));
+            if (parent) parent.appendChild(n);
+            return n;
+        };
+
+        function renderCharts(data) {
+            const host = $('charts');
+            host.textContent = '';
+            data.pairs.forEach(p => {
+                const points = data.series[p.symbol] || [];
+                const card = document.createElement('section');
+                card.className = 'card';
+                const head = document.createElement('div');
+                head.className = 'card-head';
+                const h2 = document.createElement('h2');
+                h2.textContent = `THBT / ${p.symbol}`;
+                const sub = document.createElement('span');
+                sub.className = 'sub';
+                sub.textContent = 'THBT per 1 token';
+                h2.appendChild(sub);
+                const latest = document.createElement('div');
+                latest.className = 'latest';
+                const valued = points.filter(pt => pt.price !== null);
+                const last = valued[valued.length - 1];
+                const first = valued[0];
+                const v = document.createElement('div');
+                v.className = 'value';
+                v.textContent = last ? fmtPrice(last.price) : '–';
+                const ch = document.createElement('div');
+                ch.className = 'change';
+                if (last && first && first !== last) {
+                    const pct = (last.price - first.price) / first.price * 100;
+                    ch.textContent = `${pct > 0 ? '▲ +' : pct < 0 ? '▼ ' : ''}${pct.toFixed(2)}% over this range`;
+                } else {
+                    ch.textContent = last ? `at ${fmtDayTime(last.t)}` : '';
+                }
+                latest.append(v, ch);
+                head.append(h2, latest);
+
+                const chart = document.createElement('div');
+                chart.className = 'chart';
+                chart.tabIndex = 0;
+                chart.setAttribute('role', 'img');
+                chart.setAttribute('aria-label', `THBT per ${p.symbol}, ${points.length} captures${last ? `, latest ${fmtPrice(last.price)}` : ''}. Use the left and right arrow keys to read values.`);
+                card.append(head, chart);
+                host.appendChild(card);
+                drawChart(chart, points, data.from, data.to);
+            });
+        }
+
+        function drawChart(box, points, fromMs, toMs) {
+            box.textContent = '';
+            const valued = points.filter(p => p.price !== null);
+            if (!valued.length) {
+                const nd = document.createElement('div');
+                nd.className = 'no-data';
+                nd.textContent = points.length ? 'No trades in this range yet' : 'No captures in this range yet';
+                box.appendChild(nd);
+                return;
+            }
+            const W = box.clientWidth || 460, H = box.clientHeight || 190;
+            const m = { top: 10, right: 12, bottom: 26, left: 58 };
+            const iw = W - m.left - m.right, ih = H - m.top - m.bottom;
+            const prices = valued.map(p => p.price);
+            const yt = niceTicks(Math.min(...prices), Math.max(...prices), 4);
+            const t0 = points[0].t, t1 = points[points.length - 1].t;
+            const x = t => t1 === t0 ? m.left + iw / 2 : m.left + (t - t0) / (t1 - t0) * iw;
+            const y = v => m.top + ih - (v - yt.lo) / (yt.hi - yt.lo) * ih;
+
+            const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, 'aria-hidden': 'true' }, box);
+            // grid + y labels
+            const decimals = Math.max(2, Math.min(4, -Math.floor(Math.log10(yt.step)) + 1));
+            yt.ticks.forEach(v => {
+                el('line', { x1: m.left, x2: W - m.right, y1: y(v), y2: y(v), stroke: 'var(--grid)', 'stroke-width': 1 }, svg);
+                const lbl = el('text', { x: m.left - 8, y: y(v), 'text-anchor': 'end', 'dominant-baseline': 'middle', fill: 'var(--axis-ink)', 'font-size': 11 }, svg);
+                lbl.textContent = v.toFixed(decimals);
+            });
+            // x labels: about 5, at capture times
+            const spanDays = (t1 - t0) / DAY_MS;
+            const nTicks = Math.min(points.length, iw < 360 ? 3 : 5);
+            const seen = new Set();
+            for (let i = 0; i < nTicks; i++) {
+                const idx = nTicks === 1 ? 0 : Math.round(i * (points.length - 1) / (nTicks - 1));
+                if (seen.has(idx)) continue;
+                seen.add(idx);
+                const t = points[idx].t;
+                const anchor = i === 0 ? 'start' : i === nTicks - 1 ? 'end' : 'middle';
+                const lbl = el('text', { x: x(t), y: H - 6, 'text-anchor': anchor, fill: 'var(--axis-ink)', 'font-size': 11 }, svg);
+                lbl.textContent = spanDays > 3 ? fmtDay(t) : fmtDayTime(t);
+            }
+            // line, broken at gaps (no trades yet)
+            let d = '';
+            let pen = false;
+            points.forEach(p => {
+                if (p.price === null) { pen = false; return; }
+                d += `${pen ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.price).toFixed(1)}`;
+                pen = true;
+            });
+            el('path', { d, fill: 'none', stroke: 'var(--series-1)', 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, svg);
+            // single points (or very few) get markers so they're visible
+            if (valued.length <= 12) valued.forEach(p => el('circle', { cx: x(p.t), cy: y(p.price), r: 4, fill: 'var(--series-1)', stroke: '#fff', 'stroke-width': 2 }, svg));
+
+            // crosshair + tooltip
+            const cross = el('line', { y1: m.top, y2: m.top + ih, stroke: 'var(--axis-ink)', 'stroke-width': 1, 'stroke-dasharray': '3 3', visibility: 'hidden' }, svg);
+            const dot = el('circle', { r: 5, fill: 'var(--series-1)', stroke: '#fff', 'stroke-width': 2, visibility: 'hidden' }, svg);
+            const tip = document.createElement('div');
+            tip.className = 'tooltip';
+            box.appendChild(tip);
+            let active = -1;
+
+            function show(idx) {
+                if (idx < 0 || idx >= points.length) return;
+                active = idx;
+                const p = points[idx];
+                const px = x(p.t);
+                cross.setAttribute('x1', px); cross.setAttribute('x2', px); cross.setAttribute('visibility', 'visible');
+                if (p.price !== null) {
+                    dot.setAttribute('cx', px); dot.setAttribute('cy', y(p.price)); dot.setAttribute('visibility', 'visible');
+                } else dot.setAttribute('visibility', 'hidden');
+                tip.textContent = '';
+                const tv = document.createElement('div'); tv.className = 'tv';
+                const key = document.createElement('span'); key.className = 'key';
+                const val = document.createElement('span'); val.textContent = p.price === null ? 'No trades yet' : fmtPrice(p.price);
+                tv.append(key, val);
+                const tt = document.createElement('div'); tt.className = 'tt'; tt.textContent = fmtFull(p.t);
+                tip.append(tv, tt);
+                if (p.asOf) { const ta = document.createElement('div'); ta.className = 'ta'; ta.textContent = `Last trade ${fmtDayTime(p.asOf)}`; tip.appendChild(ta); }
+                tip.style.display = 'block';
+                const tw = tip.offsetWidth;
+                let left = px + 12;
+                if (left + tw > W) left = px - tw - 12;
+                tip.style.left = `${Math.max(0, left)}px`;
+            }
+            function hide() {
+                active = -1;
+                cross.setAttribute('visibility', 'hidden'); dot.setAttribute('visibility', 'hidden');
+                tip.style.display = 'none';
+            }
+            function nearest(clientX) {
+                const r = svg.getBoundingClientRect();
+                const px = (clientX - r.left) * (W / r.width);
+                let best = 0, bestD = Infinity;
+                points.forEach((p, i) => { const dd = Math.abs(x(p.t) - px); if (dd < bestD) { bestD = dd; best = i; } });
+                return best;
+            }
+            box.addEventListener('pointermove', e => show(nearest(e.clientX)));
+            box.addEventListener('pointerdown', e => show(nearest(e.clientX)));
+            box.addEventListener('pointerleave', hide);
+            box.addEventListener('blur', hide);
+            box.addEventListener('focus', () => show(points.length - 1));
+            box.addEventListener('keydown', e => {
+                if (e.key === 'ArrowLeft') { show(Math.max(0, (active < 0 ? points.length : active) - 1)); e.preventDefault(); }
+                if (e.key === 'ArrowRight') { show(Math.min(points.length - 1, active + 1)); e.preventDefault(); }
+                if (e.key === 'Escape') hide();
+            });
+        }
+
+        function renderTable(data) {
+            const head = $('tableHead'), body = $('tableBody');
+            head.textContent = ''; body.textContent = '';
+            const hr = document.createElement('tr');
+            const th0 = document.createElement('th'); th0.textContent = 'Captured at (ICT)'; hr.appendChild(th0);
+            data.pairs.forEach(p => { const th = document.createElement('th'); th.className = 'num'; th.textContent = `THBT / ${p.symbol}`; hr.appendChild(th); });
+            head.appendChild(hr);
+
+            const byTime = new Map();
+            data.pairs.forEach(p => (data.series[p.symbol] || []).forEach(pt => {
+                if (!byTime.has(pt.t)) byTime.set(pt.t, {});
+                byTime.get(pt.t)[p.symbol] = pt.price;
+            }));
+            const times = [...byTime.keys()].sort((a, b) => b - a);
+            if (!times.length) {
+                const tr = document.createElement('tr');
+                const td = document.createElement('td'); td.colSpan = data.pairs.length + 1; td.className = 'empty';
+                td.textContent = 'No captures in this range yet.';
+                tr.appendChild(td); body.appendChild(tr);
+                $('csvBtn').disabled = true;
+                return;
+            }
+            const frag = document.createDocumentFragment();
+            times.forEach(t => {
+                const tr = document.createElement('tr');
+                const td0 = document.createElement('td'); td0.textContent = fmtDayTime(t); tr.appendChild(td0);
+                data.pairs.forEach(p => {
+                    const v = byTime.get(t)[p.symbol];
+                    const td = document.createElement('td');
+                    td.className = 'num' + (v === null || v === undefined ? ' gap' : '');
+                    td.textContent = v === null || v === undefined ? '–' : fmtPrice(v);
+                    tr.appendChild(td);
+                });
+                frag.appendChild(tr);
+            });
+            body.appendChild(frag);
+            $('csvBtn').disabled = false;
+        }
+
+        $('csvBtn').addEventListener('click', () => {
+            if (!lastData) return;
+            const d = lastData;
+            const rows = [['captured_at_utc', 'captured_at_ict', ...d.pairs.map(p => `THBT_per_${p.symbol}`)]];
+            const byTime = new Map();
+            d.pairs.forEach(p => (d.series[p.symbol] || []).forEach(pt => {
+                if (!byTime.has(pt.t)) byTime.set(pt.t, {});
+                byTime.get(pt.t)[p.symbol] = pt.price;
+            }));
+            [...byTime.keys()].sort((a, b) => a - b).forEach(t => {
+                const ict = new Date(t + ICT_OFFSET_MS).toISOString().slice(0, 16).replace('T', ' ');
+                rows.push([new Date(t).toISOString(), ict, ...d.pairs.map(p => { const v = byTime.get(t)[p.symbol]; return v === null || v === undefined ? '' : String(v); })]);
+            });
+            const blob = new Blob([rows.map(r => r.join(',')).join('\n') + '\n'], { type: 'text/csv' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `thbt-price-history-${ictDateKey(d.from)}-to-${ictDateKey(d.to)}.csv`;
+            document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+        });
+
+        // Redraw charts at the new width (labels stay crisp; no stretched SVG).
+        let resizeTimer = null;
+        window.addEventListener('resize', () => {
+            clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(() => { if (lastData) renderCharts(lastData); }, 150);
+        });
+
+        // Start: last-used preset, default 7 days.
+        const savedDays = storageGet(RANGE_KEY);
+        const startDays = ['1', '2', '3', '7'].includes(savedDays) ? savedDays : '7';
+        setPressed(startDays);
+        select({ days: Number(startDays) });
+    </script>
+</body>
+</html>

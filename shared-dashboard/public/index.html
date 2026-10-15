@@ -4,232 +4,25 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>THBT Price Deviation Dashboard</title>
-    <style>
-        :root {
-            /* Brand colours shared with index.html */
-            --brand-1: #667eea;
-            --brand-2: #764ba2;
-            --ink: #1f2430;
-            --muted: #6b7180;
-            --line: #e6e8ef;
-            --surface: #ffffff;
-            --surface-2: #f6f7fb;
-
-            /* Deviation states */
-            --ok-bg: #e9f7ef;     --ok-ink: #1d6b3d;     --ok-dot: #2ea862;
-            --warn-bg: #fff6d6;   --warn-ink: #7a5800;   --warn-dot: #e0a800;
-            --crit-bg: #fde4e4;   --crit-ink: #9b1c1c;   --crit-dot: #dc3545;
-            --none-bg: #f1f2f6;   --none-ink: #5c6170;   --none-dot: #a3a8b5;
-        }
-
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, var(--brand-1) 0%, var(--brand-2) 100%);
-            min-height: 100vh;
-            padding: 20px;
-            color: var(--ink);
-        }
-
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            background: var(--surface);
-            border-radius: 16px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-            overflow: hidden;
-        }
-
-        .header {
-            background: linear-gradient(135deg, var(--brand-1) 0%, var(--brand-2) 100%);
-            color: #fff;
-            padding: 24px 30px;
-            display: flex;
-            flex-wrap: wrap;
-            gap: 12px 24px;
-            align-items: center;
-            justify-content: space-between;
-        }
-        .header h1 { font-size: 1.6em; text-wrap: balance; }
-        .header p { opacity: 0.9; margin-top: 4px; font-size: 14px; }
-        .viewer { font-size: 13px; opacity: 0.9; overflow-wrap: anywhere; }
-        .header nav a {
-            color: #fff;
-            text-decoration: none;
-            font-weight: 600;
-            font-size: 14px;
-            padding: 8px 14px;
-            border: 1px solid rgba(255, 255, 255, 0.5);
-            border-radius: 8px;
-            white-space: nowrap;
-        }
-        .header nav a:hover { background: rgba(255, 255, 255, 0.15); }
-
-        /* Toolbar: refresh controls + last-updated */
-        .toolbar {
-            display: flex;
-            flex-wrap: wrap;
-            align-items: center;
-            gap: 12px 20px;
-            padding: 18px 30px;
-            background: var(--surface-2);
-            border-bottom: 1px solid var(--line);
-        }
-        .toolbar .spacer { flex: 1; }
-        .meta { font-size: 13px; color: var(--muted); display: grid; gap: 2px; }
-        .meta strong { color: var(--ink); font-variant-numeric: tabular-nums; }
-
-        button {
-            font: inherit;
-            font-weight: 600;
-            cursor: pointer;
-            border: none;
-            border-radius: 8px;
-            padding: 10px 20px;
-            background: linear-gradient(135deg, var(--brand-1) 0%, var(--brand-2) 100%);
-            color: #fff;
-            transition: transform 0.15s, box-shadow 0.15s;
-        }
-        button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4); }
-        button:disabled { opacity: 0.6; cursor: not-allowed; }
-        button.secondary {
-            background: var(--surface);
-            color: var(--brand-2);
-            border: 1px solid var(--line);
-        }
-        button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible {
-            outline: 3px solid rgba(102, 126, 234, 0.5);
-            outline-offset: 2px;
-        }
-
-        label { font-size: 13px; font-weight: 600; color: #495057; }
-        select, input[type="text"], input[type="password"] {
-            font: inherit;
-            font-size: 14px;
-            padding: 9px 12px;
-            border: 1px solid #cfd4de;
-            border-radius: 8px;
-            background: var(--surface);
-            color: var(--ink);
-        }
-        .inline-field { display: flex; align-items: center; gap: 8px; }
-
-        /* Summary chips */
-        .summary {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            padding: 20px 30px 0;
-        }
-        .chip {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 6px 12px;
-            border-radius: 999px;
-            font-size: 13px;
-            font-weight: 600;
-        }
-        .chip .dot { width: 8px; height: 8px; border-radius: 50%; }
-        .chip.crit { background: var(--crit-bg); color: var(--crit-ink); }  .chip.crit .dot { background: var(--crit-dot); }
-        .chip.warn { background: var(--warn-bg); color: var(--warn-ink); }  .chip.warn .dot { background: var(--warn-dot); }
-        .chip.ok   { background: var(--ok-bg);   color: var(--ok-ink); }    .chip.ok .dot   { background: var(--ok-dot); }
-        .chip.none { background: var(--none-bg); color: var(--none-ink); }  .chip.none .dot { background: var(--none-dot); }
-
-        .status-msg {
-            margin: 16px 30px 0;
-            padding: 12px 16px;
-            border-radius: 8px;
-            font-size: 14px;
-            line-height: 1.5;
-        }
-        .status-msg.error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-        .status-msg .reload { margin-top: 10px; }
-        .status-msg.info  { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
-
-        /* Main table */
-        .table-wrap { overflow-x: auto; padding: 20px 30px 10px; }
-        table { width: 100%; border-collapse: collapse; min-width: 760px; }
-        th {
-            text-align: left;
-            font-size: 12px;
-            letter-spacing: 0.04em;
-            text-transform: uppercase;
-            color: var(--muted);
-            font-weight: 600;
-            padding: 10px 14px;
-            border-bottom: 2px solid var(--line);
-            white-space: nowrap;
-        }
-        th.num, td.num { text-align: right; }
-        td {
-            padding: 14px;
-            border-bottom: 1px solid var(--line);
-            font-size: 14px;
-            vertical-align: middle;
-        }
-        td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
-        td .sub { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
-        td.pair { font-weight: 700; white-space: nowrap; }
-        td.pair a { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--muted); }
-        td.pair a:hover { color: var(--brand-2); }
-
-        tr.crit td { background: var(--crit-bg); }
-        tr.warn td { background: var(--warn-bg); }
-        tr.crit td:first-child { box-shadow: inset 4px 0 0 var(--crit-dot); }
-        tr.warn td:first-child { box-shadow: inset 4px 0 0 var(--warn-dot); }
-        tr.crit .dev { color: var(--crit-ink); font-weight: 700; }
-        tr.warn .dev { color: var(--warn-ink); font-weight: 700; }
-
-        .pill {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 3px 10px;
-            border-radius: 999px;
-            font-size: 12px;
-            font-weight: 700;
-            white-space: nowrap;
-        }
-        .pill.crit { background: var(--crit-dot); color: #fff; }
-        .pill.warn { background: var(--warn-dot); color: #3d2c00; }
-        .pill.ok   { background: var(--ok-bg); color: var(--ok-ink); }
-        .pill.none { background: var(--none-bg); color: var(--none-ink); }
-
-        .empty { padding: 40px 14px; text-align: center; color: var(--muted); }
-
-        .footnote {
-            padding: 10px 30px 26px;
-            font-size: 13px;
-            color: var(--muted);
-            line-height: 1.6;
-        }
-        .footnote ul { padding-left: 18px; }
-
-        @media (max-width: 600px) {
-            body { padding: 0; }
-            .container { border-radius: 0; }
-            .header, .toolbar, .summary, .table-wrap, .footnote {
-                padding-left: 16px; padding-right: 16px;
-            }
-            .status-msg { margin-left: 16px; margin-right: 16px; }
-        }
-        @media (prefers-reduced-motion: reduce) {
-            button { transition: none; }
-            button:hover:not(:disabled) { transform: none; }
-        }
-    </style>
+    <link rel="stylesheet" href="/theme.css">
 </head>
 <body>
     <div class="container">
         <header class="header">
-            <div>
-                <h1>THBT Price Deviation Dashboard</h1>
-                <p>Live Uniswap v4 pool prices on Base vs. the Bank of Thailand daily average rate</p>
+            <div class="brand-row">
+                <span class="coin" aria-hidden="true">฿</span>
+                <div>
+                    <h1>THBT Price Deviation Dashboard</h1>
+                    <p>Live Uniswap v4 pool prices on Base vs. the Bank of Thailand daily average rate</p>
+                </div>
             </div>
             <div class="viewer" id="viewer"></div>
         </header>
+
+        <nav class="tabs" aria-label="Pages">
+            <a href="/" aria-current="page">Live rates</a>
+            <a href="/history.html">Price history</a>
+        </nav>
 
         <div class="toolbar">
             <button id="refreshBtn" type="button">Refresh now</button>

@@ -1,0 +1,253 @@
+/* Shared look for the THBT dashboards: warm orange, in the style of the TrueMoney wallet app.
+   Bright oranges are for decoration (bands, icons, underlines); text and buttons use the deeper
+   steps so they stay readable (white on --brand-strong is 4.3:1+, --brand-ink on white 5.2:1). */
+:root {
+    --brand-bright: #ff7a1a;     /* band highlight */
+    --brand: #f26a1b;            /* icons, underlines, chart line */
+    --brand-strong: #d9480f;     /* buttons */
+    --brand-deep: #c2410c;       /* orange text, links, active tab */
+    --brand-ink: #c2410c;
+    --peach: #fff1e7;            /* soft orange surfaces */
+    --peach-2: #ffe4d2;
+
+    --ink: #1f2430;
+    --muted: #5f6371;
+    --line: #f0e6df;
+    --surface: #ffffff;
+    --surface-2: #fff8f3;
+    --page: #fbf6f2;
+
+    /* Deviation states (unchanged meaning: green within 2%, yellow over 2%, red over 4%) */
+    --ok-bg: #e9f7ef;     --ok-ink: #1d6b3d;     --ok-dot: #2ea862;
+    --warn-bg: #fff6d6;   --warn-ink: #7a5800;   --warn-dot: #e0a800;
+    --crit-bg: #fde4e4;   --crit-ink: #9b1c1c;   --crit-dot: #dc3545;
+    --none-bg: #f3f1ef;   --none-ink: #5c6170;   --none-dot: #a3a8b5;
+
+    --radius: 18px;
+    --shadow: 0 10px 30px rgba(150, 60, 10, 0.12);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    color: var(--ink);
+    min-height: 100vh;
+    padding: 20px;
+    /* Orange band at the top, like the wallet screen, fading into a warm off-white page. */
+    background:
+        radial-gradient(circle at 85% -10%, rgba(255, 255, 255, 0.22) 0 160px, transparent 161px),
+        linear-gradient(160deg, var(--brand-bright) 0%, var(--brand) 45%, #ea5a0c 100%) top / 100% 240px no-repeat,
+        var(--page);
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    background: var(--surface);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+}
+
+/* Header: peach card, like the wallet balance card */
+.header {
+    background: linear-gradient(135deg, var(--peach-2) 0%, var(--peach) 45%, #ffffff 100%);
+    padding: 24px 30px 18px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px 24px;
+    align-items: center;
+    justify-content: space-between;
+}
+.brand-row { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.coin {
+    flex: none;
+    width: 44px; height: 44px;
+    border-radius: 50%;
+    display: grid; place-items: center;
+    color: #fff;
+    font-weight: 800;
+    font-size: 22px;
+    background: radial-gradient(circle at 35% 30%, #ffa25a 0%, var(--brand) 55%, #d9480f 100%);
+    box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.12), 0 4px 10px rgba(242, 106, 27, 0.35);
+}
+.header h1 { font-size: 1.5em; line-height: 1.2; text-wrap: balance; }
+.header p { color: var(--muted); margin-top: 4px; font-size: 14px; }
+.viewer {
+    font-size: 13px;
+    color: var(--brand-deep);
+    background: #ffffff;
+    border: 1px solid var(--peach-2);
+    padding: 6px 12px;
+    border-radius: 999px;
+    overflow-wrap: anywhere;
+}
+.viewer:empty { display: none; }
+
+/* Page tabs, like the wallet's token / history tabs */
+.tabs {
+    display: flex;
+    gap: 28px;
+    padding: 0 30px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+}
+.tabs a {
+    position: relative;
+    padding: 14px 2px 12px;
+    color: var(--muted);
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 15px;
+}
+.tabs a:hover { color: var(--ink); }
+.tabs a[aria-current="page"] { color: var(--brand-deep); }
+.tabs a[aria-current="page"]::after {
+    content: '';
+    position: absolute;
+    left: 0; right: 0; bottom: -1px;
+    height: 3px;
+    border-radius: 3px 3px 0 0;
+    background: var(--brand);
+}
+
+/* Toolbar */
+.toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px 20px;
+    padding: 18px 30px;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--line);
+}
+.toolbar .spacer { flex: 1; }
+.meta { font-size: 13px; color: var(--muted); display: grid; gap: 2px; }
+.meta strong { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+button {
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+    border: none;
+    border-radius: 12px;
+    padding: 10px 20px;
+    background: linear-gradient(135deg, var(--brand-strong) 0%, var(--brand-deep) 100%);
+    color: #fff;
+    transition: transform 0.15s, box-shadow 0.15s;
+}
+button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(217, 72, 15, 0.35); }
+button:disabled { opacity: 0.6; cursor: not-allowed; }
+button.secondary {
+    background: var(--surface);
+    color: var(--brand-deep);
+    border: 1px solid var(--peach-2);
+}
+button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible {
+    outline: 3px solid rgba(242, 106, 27, 0.45);
+    outline-offset: 2px;
+}
+
+label { font-size: 13px; font-weight: 600; color: var(--muted); }
+select, input[type="text"], input[type="date"] {
+    font: inherit;
+    font-size: 14px;
+    padding: 9px 12px;
+    border: 1px solid #e6d6cb;
+    border-radius: 10px;
+    background: var(--surface);
+    color: var(--ink);
+}
+.inline-field { display: flex; align-items: center; gap: 8px; }
+
+/* Summary chips */
+.summary { display: flex; flex-wrap: wrap; gap: 10px; padding: 20px 30px 0; }
+.summary:empty { display: none; }
+.chip {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 6px 12px; border-radius: 999px;
+    font-size: 13px; font-weight: 600;
+}
+.chip .dot { width: 8px; height: 8px; border-radius: 50%; }
+.chip.crit { background: var(--crit-bg); color: var(--crit-ink); }  .chip.crit .dot { background: var(--crit-dot); }
+.chip.warn { background: var(--warn-bg); color: var(--warn-ink); }  .chip.warn .dot { background: var(--warn-dot); }
+.chip.ok   { background: var(--ok-bg);   color: var(--ok-ink); }    .chip.ok .dot   { background: var(--ok-dot); }
+.chip.none { background: var(--none-bg); color: var(--none-ink); }  .chip.none .dot { background: var(--none-dot); }
+
+.status-msg {
+    margin: 16px 30px 0;
+    padding: 12px 16px;
+    border-radius: 12px;
+    font-size: 14px;
+    line-height: 1.5;
+}
+.status-msg.error { background: #fdecea; color: #8a1c1c; border: 1px solid #f7c9c4; }
+.status-msg.info  { background: var(--peach); color: #7a3410; border: 1px solid var(--peach-2); }
+.status-msg .reload { margin-top: 10px; }
+
+/* Tables */
+.table-wrap { overflow-x: auto; padding: 20px 30px 10px; }
+table { width: 100%; border-collapse: collapse; min-width: 760px; }
+th {
+    text-align: left;
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+    padding: 10px 14px;
+    border-bottom: 2px solid var(--line);
+    white-space: nowrap;
+}
+th.num, td.num { text-align: right; }
+td {
+    padding: 14px;
+    border-bottom: 1px solid var(--line);
+    font-size: 14px;
+    vertical-align: middle;
+}
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td .sub { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
+td.pair { font-weight: 700; white-space: nowrap; }
+td.pair a { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--muted); }
+td.pair a:hover { color: var(--brand-deep); }
+
+tr.crit td { background: var(--crit-bg); }
+tr.warn td { background: var(--warn-bg); }
+tr.crit td:first-child { box-shadow: inset 4px 0 0 var(--crit-dot); }
+tr.warn td:first-child { box-shadow: inset 4px 0 0 var(--warn-dot); }
+tr.crit .dev { color: var(--crit-ink); font-weight: 700; }
+tr.warn .dev { color: var(--warn-ink); font-weight: 700; }
+
+.pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 10px; border-radius: 999px;
+    font-size: 12px; font-weight: 700; white-space: nowrap;
+}
+.pill.crit { background: var(--crit-dot); color: #fff; }
+.pill.warn { background: var(--warn-dot); color: #3d2c00; }
+.pill.ok   { background: var(--ok-bg); color: var(--ok-ink); }
+.pill.none { background: var(--none-bg); color: var(--none-ink); }
+
+.empty { padding: 40px 14px; text-align: center; color: var(--muted); }
+
+.footnote {
+    padding: 10px 30px 26px;
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.6;
+}
+.footnote ul { padding-left: 18px; }
+
+@media (max-width: 600px) {
+    body { padding: 0; background-size: 100% 160px, 100% 160px, auto; }
+    .container { border-radius: 0; }
+    .header, .tabs, .toolbar, .summary, .table-wrap, .footnote { padding-left: 16px; padding-right: 16px; }
+    .header h1 { font-size: 1.25em; }
+    .status-msg { margin-left: 16px; margin-right: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+    button { transition: none; }
+    button:hover:not(:disabled) { transform: none; }
+}

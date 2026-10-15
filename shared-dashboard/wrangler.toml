@@ -28,6 +28,18 @@ ACCESS_TEAM_DOMAIN = ""      # e.g. "yourteam.cloudflareaccess.com"
 ACCESS_AUD = ""              # Application Audience (AUD) tag
 ALLOWED_EMAIL_DOMAIN = ""    # optional, e.g. "yourcompany.com"
 
+# Price history (README, "Price history and alerts"). The URL isn't secret; the key is
+# the SUPABASE_SECRET_KEY secret.
+SUPABASE_URL = "https://terfvnsyvtccujglklrq.supabase.co"
+# Optional: the dashboard's address, used for the "Open price history" link in alerts.
+DASHBOARD_URL = ""           # e.g. "https://uniswap-lp-price.<your-subdomain>.workers.dev"
+
+# Capture each 6-hour mark (09:00, 15:00, 21:00, 03:00 ICT = 02:00, 08:00, 14:00, 20:00 UTC).
+# The first run is a minute after the mark; the second only acts if the first couldn't capture
+# it (for example, the subgraph hadn't indexed up to the mark yet). Cron times are UTC.
+[triggers]
+crons = ["1 2,8,14,20 * * *", "15 2,8,14,20 * * *"]
+
 # Shared cache across Cloudflare locations.
 [[kv_namespaces]]
 binding = "RATES_CACHE"
@@ -38,3 +50,5 @@ id = "eb8a3ed8adc343c1bbf6141a5b4ca1c2"
 #   GRAPH_API_KEY
 #   BOT_API_TOKEN
 #   VIEWER_LINKS   (link mode) one "name:token" per line
+#   SUPABASE_SECRET_KEY       price history storage
+#   GOOGLE_CHAT_WEBHOOK_URL   optional, alerts at each 6-hour capture
