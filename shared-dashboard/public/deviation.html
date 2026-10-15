@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>THBT Deviation History</title>
+    <link rel="stylesheet" href="/theme.css">
+    <link rel="stylesheet" href="/history.css">
+</head>
+<body data-mode="deviation">
+    <div class="container viz-root">
+        <header class="header">
+            <div class="brand-row">
+                <span class="coin" aria-hidden="true">฿</span>
+                <div>
+                    <h1>THBT Deviation History</h1>
+                    <p>How far each Uniswap pool price sat from the Bank Rate, every 6 hours</p>
+                </div>
+            </div>
+            <div class="viewer" id="viewer"></div>
+        </header>
+
+        <nav class="tabs" aria-label="Pages">
+            <a href="/">Live rates</a>
+            <a href="/history.html">Price history</a>
+            <a href="/deviation.html" aria-current="page">Deviation history</a>
+        </nav>
+
+        <div class="toolbar">
+            <div class="range" role="group" aria-label="Date range">
+                <button type="button" data-days="1">1D</button>
+                <button type="button" data-days="2">2D</button>
+                <button type="button" data-days="3">3D</button>
+                <button type="button" data-days="7">7D</button>
+                <button type="button" data-days="custom">Custom</button>
+            </div>
+            <form class="custom" id="customForm">
+                <div class="field">
+                    <label for="fromDate">From</label>
+                    <input type="date" id="fromDate" required>
+                </div>
+                <div class="field">
+                    <label for="toDate">To</label>
+                    <input type="date" id="toDate" required>
+                </div>
+                <button type="submit" class="secondary">Apply</button>
+                <span class="hint">Up to 90 days back, 90 days at most.</span>
+                <div class="range-error" id="rangeError" role="alert"></div>
+            </form>
+            <div class="spacer"></div>
+            <div class="meta">
+                <span>Showing: <strong id="rangeLabel">–</strong></span>
+                <span>Captures: <strong id="captureCount">–</strong></span>
+            </div>
+        </div>
+
+        <div id="statusArea"></div>
+
+        <div class="stage" id="stage">
+            <p class="schedule-note">Captured at 03:00, 09:00, 15:00 and 21:00 Bangkok time. Each value compares the pool price at that time with the Bank Rate in effect then. Dashed lines mark ±2% and ±4%.</p>
+            <div class="grid" id="charts"></div>
+        </div>
+
+        <div class="table-head">
+            <h2>All captures</h2>
+            <button type="button" class="secondary" id="csvBtn" disabled>Download CSV</button>
+        </div>
+        <div class="table-legend" aria-hidden="true"><span><i class="warn"></i>Over 2%</span><span><i class="crit"></i>Over 4%</span></div>
+        <div class="table-wrap">
+            <table class="history-table">
+                <thead id="tableHead"></thead>
+                <tbody id="tableBody"><tr><td class="empty">Loading…</td></tr></tbody>
+            </table>
+        </div>
+
+        <div class="footnote">
+            <ul>
+                <li><strong>Deviation</strong> = (Uniswap price − Bank Rate) ÷ Bank Rate, as on the Live rates page. Positive means the pool gave more THBT per token than the Bank Rate.</li>
+                <li><strong>Bank Rate</strong> is the Bank of Thailand's daily average mid rate, published around 18:00 Bangkok time on business days. Each capture uses the latest rate already published at that moment: the previous business day's rate at 09:00 and 15:00, and that day's rate at 21:00 and 03:00. USDT and USDC are compared against USD.</li>
+                <li>A gap means the pool hadn't traded yet, or no Bank Rate was available.</li>
+                <li>History is kept for the last 90 days. Newly captured prices are also posted to the team's alert channels.</li>
+            </ul>
+        </div>
+    </div>
+
+    <script src="/history-page.js"></script>
+</body>
+</html>

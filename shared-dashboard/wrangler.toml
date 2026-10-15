@@ -52,3 +52,5 @@ id = "eb8a3ed8adc343c1bbf6141a5b4ca1c2"
 #   VIEWER_LINKS   (link mode) one "name:token" per line
 #   SUPABASE_SECRET_KEY       price history storage
 #   GOOGLE_CHAT_WEBHOOK_URL   optional, alerts at each 6-hour capture
+#   TELEGRAM_BOT_TOKEN        optional, Telegram alerts (from @BotFather)
+#   TELEGRAM_CHAT_ID          optional, the channel or group to post to

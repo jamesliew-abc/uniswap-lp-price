@@ -1,7 +1,8 @@
 // Shared THBT Price Deviation Dashboard: Cloudflare Worker
 //
 // Serves the dashboard page (public/index.html) and a single JSON endpoint, /api/rates, that
-// compares each THBT pool's live Uniswap v4 price with the latest BOT daily average mid rate.
+// compares each THBT pool's live Uniswap v4 price with the latest Bank Rate (Bank of Thailand
+// daily average mid rate).
 //
 // The Graph API key and the BOT API token live here as Worker secrets, so viewers never need
 // (or see) them. Every request is checked by the Worker itself, using one of two sign-in modes:
@@ -11,7 +12,7 @@
 //               Worker verifies the Access token on every request.
 // Until a mode is configured, the Worker refuses every request.
 //
-// Results are cached (pool prices for 3 minutes, BOT rates for 3 hours) and shared by every
+// Results are cached (pool prices for 3 minutes, Bank Rates for 3 hours) and shared by every
 // viewer, so API usage stays the same however many people have the page open.
 //
 // Configuration (see shared-dashboard/README.md):
@@ -22,7 +23,7 @@
 //             ALLOWED_EMAIL_DOMAIN (access mode, optional) e.g. "yourcompany.com"
 //   KV:       RATES_CACHE (optional but recommended), shares the cache across Cloudflare locations
 
-import { handleHistory, runScheduled, buildChatMessage, postToChat, dashboardUrlFrom, formatIct } from './history.js';
+import { handleHistory, runScheduled, sendAlert, alertChannels, formatIct } from './history.js';
 
 const SUBGRAPH_ID = 'Gqm2b5J85n1bhCyDMpGbtbVn4935EvvdyHdHrx3dibyj';
 const BOT_ENDPOINT = 'https://gateway.api.bot.or.th/Stat-ExchangeRate/v2/DAILY_AVG_EXG_RATE/';
@@ -123,6 +124,7 @@ function historyContext(env, ctx) {
     classify,
     thresholds: { yellow: DEVIATION_YELLOW, red: DEVIATION_RED },
     getBotRates: () => getBotRates(env, ctx),
+    fetchBankRange: (currency, startKey, endKey) => fetchBankRange(env, currency, startKey, endKey),
   };
 }
 
@@ -428,6 +430,19 @@ async function fetchBotCurrency(env, currency, startKey, endKey) {
   return body?.result?.data?.data_detail || body?.data?.data_detail || body?.data_detail || (Array.isArray(body) ? body : []);
 }
 
+// All published Bank Rates for one currency between two dates: [{ date, rate }], oldest first.
+async function fetchBankRange(env, currency, startKey, endKey) {
+  if (!env.BOT_API_TOKEN) throw new Error('BOT_API_TOKEN secret is not set on the Worker');
+  const records = await fetchBotCurrency(env, currency, startKey, endKey);
+  const out = [];
+  records.forEach(rec => {
+    const dateRaw = rec.period || rec.date || rec.period_date || rec.day;
+    const rate = parseFloat(rec.mid_rate ?? rec.average_rate ?? rec.rate ?? rec.mid ?? rec.value);
+    if (dateRaw && isFinite(rate) && rate > 0) out.push({ date: String(dateRaw).slice(0, 10), rate });
+  });
+  return out.sort((a, b) => a.date.localeCompare(b.date));
+}
+
 // Latest published BOT mid rate per currency, from raw BOT records.
 export function latestBotRates(records) {
   const latest = {};
@@ -490,10 +505,11 @@ const COOLDOWN_KEY = 'manual-alert-last-sent';
 let lastManualAlertAt = 0;
 
 async function sendManualAlert(env, ctx, viewer) {
-  if (!env.GOOGLE_CHAT_WEBHOOK_URL) {
-    return { status: 503, body: { error: 'Google Chat alerts aren’t set up yet: the GOOGLE_CHAT_WEBHOOK_URL secret is missing on the Worker.' } };
+  const channels = alertChannels(env);
+  if (!channels.length) {
+    return { status: 503, body: { error: 'Alerts aren’t set up yet: add GOOGLE_CHAT_WEBHOOK_URL and/or TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID to the Worker.' } };
   }
-  // One alert a minute across everyone, so a double-click or two people at once don't spam the space.
+  // One alert a minute across everyone, so a double-click or two people at once don't spam the channels.
   let last = lastManualAlertAt;
   if (env.RATES_CACHE) {
     try { last = Math.max(last, Number(await env.RATES_CACHE.get(COOLDOWN_KEY)) || 0); } catch (e) { /* best effort */ }
@@ -507,26 +523,27 @@ async function sendManualAlert(env, ctx, viewer) {
   if (env.RATES_CACHE) {
     try { await env.RATES_CACHE.put(COOLDOWN_KEY, String(lastManualAlertAt), { expirationTtl: 120 }); } catch (e) { /* best effort */ }
   }
+  const releaseCooldown = async () => {
+    lastManualAlertAt = 0;
+    if (env.RATES_CACHE) { try { await env.RATES_CACHE.delete(COOLDOWN_KEY); } catch (e) { /* ignore */ } }
+  };
 
   let data;
   try {
     data = await getRates(env, ctx, { fresh: true });
   } catch (err) {
-    lastManualAlertAt = 0;
+    await releaseCooldown();
     throw err;
   }
   const sentAt = Date.now();
-  const items = data.rows.map(r => ({ symbol: r.symbol, price: r.poolRate, botRate: r.botRate, deviation: r.deviation }));
+  const items = data.rows.map(r => ({ symbol: r.symbol, price: r.poolRate, bankRate: r.botRate, deviation: r.deviation }));
   const who = viewer ? ` by ${viewer}` : '';
-  const message = buildChatMessage(`THBT prices: sent from the dashboard${who} at ${formatIct(sentAt)}`, items, dashboardUrlFrom(env), '', 'Open the dashboard');
-  try {
-    await postToChat(env, message);
-  } catch (err) {
-    lastManualAlertAt = 0;
-    if (env.RATES_CACHE) { try { await env.RATES_CACHE.delete(COOLDOWN_KEY); } catch (e) { /* ignore */ } }
-    throw err;
+  const result = await sendAlert(env, `THBT prices: sent from the dashboard${who} at ${formatIct(sentAt)}`, items, '', 'Open the dashboard');
+  if (!result.sent.length) {
+    await releaseCooldown();
+    return { status: 502, body: { error: result.failed.map(f => `${f.channel}: ${f.error}`).join('; '), failed: result.failed } };
   }
-  return { status: 200, body: { ...data, sentAt, message: message.text } };
+  return { status: 200, body: { ...data, sentAt, sent: result.sent, failed: result.failed } };
 }
 
 // Latest BOT rates, from the shared cache when it's fresh enough. Problems go into `warnings`.
@@ -538,9 +555,9 @@ async function getBotRates(env, ctx, warnings = []) {
       // Keep previously cached rates for any currency that failed this time.
       bot = { rates: { ...(bot ? bot.rates : {}), ...fresh.rates }, fetchedAt: fresh.fetchedAt };
       cachePut(env, ctx, 'bot', bot, 7 * 24 * 3600);
-      if (fresh.failed.length) warnings.push(`BOT rate lookup failed for ${fresh.failed.join('; ')}. Showing the last known rate where available.`);
+      if (fresh.failed.length) warnings.push(`Bank Rate lookup failed for ${fresh.failed.join('; ')}. Showing the last known rate where available.`);
     } catch (err) {
-      warnings.push(`BOT rate lookup failed (${err.message}). Showing the last known rates where available.`);
+      warnings.push(`Bank Rate lookup failed (${err.message}). Showing the last known rates where available.`);
     }
   }
   return bot;

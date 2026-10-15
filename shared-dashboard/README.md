@@ -1,6 +1,6 @@
 # Shared Price Deviation Dashboard
 
-A separate, shareable version of `dashboard.html` for an internal audience. Viewers open the dashboard and see live rates without needing a Graph API key or BOT token, because the dashboard uses yours from the server side.
+A separate, shareable version of `dashboard.html` for an internal audience. Viewers open the dashboard and see live rates without needing a Graph API key or Bank of Thailand (BOT) API token, because the dashboard uses yours from the server side.
 
 The original `dashboard.html` on GitHub Pages is unchanged and still works with your own keys.
 
@@ -10,15 +10,15 @@ The original `dashboard.html` on GitHub Pages is unchanged and still works with 
 flowchart LR
     V[Viewer's browser] -->|personal link| W[Cloudflare Worker<br/>holds Graph key + BOT token]
     W -->|cached 3 min| G[Uniswap v4 subgraph]
-    W -->|cached 3 h| B[BOT exchange-rate API]
+    W -->|cached 3 h| B[Bank of Thailand exchange-rate API]
 ```
 
 - **One Cloudflare Worker** serves the page (`public/index.html`) and one JSON endpoint, `/api/rates`. Your Graph key and BOT token are stored as Worker secrets and never reach a browser.
 - **The Worker checks every request** before serving anything, and refuses everything until a sign-in mode is set up. There are two modes (set `AUTH_MODE` in `wrangler.toml`):
   - **`link` (default): personal links.** Each person or team gets their own link. You can turn any one off without affecting the others. No sign-in, no admin approval.
   - **`access`: emailed one-time code** through Cloudflare Access. Viewers type their work email and get a code. Only addresses you allow can get in.
-- **Shared cache:** pool prices are fetched at most every 3 minutes and BOT rates every 3 hours, whatever the number of viewers. With 50 people watching, API usage is the same as for one.
-- **Same calculation as `dashboard.html`:** deviation thresholds (red > 4%, yellow > 2%), BOT rate selection, pool fallback and THBT orientation are unchanged.
+- **Shared cache:** pool prices are fetched at most every 3 minutes and Bank Rates every 3 hours, whatever the number of viewers. With 50 people watching, API usage is the same as for one.
+- **Same calculation as `dashboard.html`:** deviation thresholds (red > 4%, yellow > 2%), Bank Rate selection, pool fallback and THBT orientation are unchanged.
 
 ### Which mode to choose
 
@@ -40,7 +40,10 @@ Personal links are the quickest. If the dashboard should only ever be seen by na
 | `public/index.html` | The Live rates page (no settings or keys) |
 | `public/history.html` | The Price history page |
 | `public/theme.css` | Shared orange theme for both pages |
-| `src/history.js` | 6-hourly capture, 90-day backfill, Google Chat alert and the history API |
+| `src/history.js` | 6-hourly capture, 90-day backfill, Bank Rate history, alerts (Google Chat, Telegram) and the history API |
+| `public/history.html`, `public/deviation.html` | Price history and Deviation history pages (shared code in `history-page.js` and `history.css`) |
+| `scripts/telegram-setup.mjs` | Finds your Telegram channel's chat ID and sends a test message |
+| `supabase/migrations/` | The Supabase tables, for reference (already applied) |
 | `scripts/new-link.mjs` | Creates a personal link (link mode) |
 | `wrangler.toml` | Worker configuration |
 
@@ -117,16 +120,22 @@ If your company's email filter holds the code emails, ask IT to allow mail from 
 - **Links:** open your own link in a private window and confirm you see live rates. Then change one character of the token and confirm you get "This link isn't valid".
 - **Emailed code:** open the `workers.dev` URL in a private window, enter your work email, and confirm the code arrives and the dashboard loads. Then try a personal address and confirm Access blocks it.
 
-## Price history and alerts
+## Price history, deviation history and alerts
+
+**Bank Rate** throughout the dashboard means the Bank of Thailand's Daily Average Exchange Rate mid rate.
 
 The **Price history** page shows each pair's THBT price at fixed 6-hour marks: **03:00, 09:00, 15:00 and 21:00 Bangkok time**. It opens on the last 7 days, with quick switches for 1, 2 and 3 days and a custom range of up to 90 days.
+
+The **Deviation history** page uses the same captures and date ranges, but shows each pair's deviation from the Bank Rate at each mark. Dashed lines mark ±2% and ±4%, each card counts how often the pair went over them, and the table and CSV include the Uniswap price and Bank Rate behind every value.
 
 ```mermaid
 flowchart LR
     C[Cron, just after each mark] --> W[Worker]
     W -->|price after last swap before the mark| G[Uniswap v4 subgraph]
     W -->|store| S[(Supabase<br/>thbt_price_marks)]
+    W -->|Bank Rates, daily| B[Bank of Thailand API]
     W -->|alert| GC[Google Chat space]
+    W -->|alert| TG[Telegram channel]
     P[Price history page] -->|/api/history| W
     W -->|read| S
 ```
@@ -134,23 +143,53 @@ flowchart LR
 - **What's stored:** for each mark and pair, the pool price right after the last swap before that time. It uses the same formula as the Live rates page, applied to the swap's recorded price, so live captures and backfilled history match exactly.
 - **When:** cron triggers at 1 and 15 minutes past each mark (UTC 02:00, 08:00, 14:00, 20:00). The second run only does anything if the first couldn't capture the mark, for example because the subgraph was still catching up.
 - **Backfill:** missing marks from the last 90 days are filled in automatically, up to 120 marks a run, by the cron and when someone opens the history page. The first visit fills the full 90 days in about a minute.
-- **Alert:** when a mark is captured, the Worker posts the five prices to Google Chat. Backfilled marks don't trigger alerts. Each pair is one line:
+- **Which Bank Rate a capture uses:** the latest one already published at that moment. The Bank of Thailand publishes each business day's rate around 18:00 Bangkok time, so the 09:00 and 15:00 captures use the previous business day's rate, and the 21:00 and 03:00 captures use that day's. Weekends and holidays use the last business day. Bank Rates are stored in Supabase (`thbt_bank_rates`) and kept up to date by the cron.
+- **Alert:** when a mark is captured, the Worker posts the five prices to every alert channel that's set up (Google Chat and/or Telegram). Backfilled marks don't trigger alerts. Each pair is one line:
 
   ```
   *THBT prices: 6-hour capture at 15 Oct 2026, 09:00 ICT*
-  THBT / USDC: Uniswap: 33.21, BoT Rate: 33.01, Deviation: +0.61%
+  THBT / USDC: Uniswap: 33.21, Bank Rate: 33.01, Deviation: +0.61%
   ```
 
-- **Send to Google Chat button** (Live rates page): posts the prices as of that moment, in the same format, with the sender's name in the title. Prices are fetched fresh, not from the 3-minute cache, and nothing is saved to the price history. To avoid double posts, it can be used once a minute across everyone.
-- **Storage:** Supabase table `public.thbt_price_marks` in "jamesliew-abc's Project". Row level security is on with no policies, so only the Worker's secret key can read or write it.
+- **Send alert button** (Live rates page): posts the prices as of that moment to every alert channel, in the same format, with the sender's name in the title. If one channel fails, the others still get it and the page says which failed. Prices are fetched fresh, not from the 3-minute cache, and nothing is saved to the price history. To avoid double posts, it can be used once a minute across everyone.
+- **Storage:** Supabase tables `public.thbt_price_marks` and `public.thbt_bank_rates` in "jamesliew-abc's Project". Row level security is on with no policies, so only the Worker's secret key can read or write it.
 
 ### Setup
 
 1. **Supabase key.** In Supabase, open the project → **Project Settings → API Keys → Secret keys**, create a key, and add it to the Worker as the secret **`SUPABASE_SECRET_KEY`**. A legacy `service_role` key also works. The project URL is already in `wrangler.toml`.
 2. **Google Chat webhook.** In Google Chat, in a browser rather than the mobile app, open the space → click its name → **Apps & integrations → Add webhooks**. Name it (e.g. "THBT prices"), save, then use **⋮ → Copy link**. Add that URL to the Worker as the secret **`GOOGLE_CHAT_WEBHOOK_URL`**. Treat it like a password: anyone with it can post to the space.
    - If **Add webhooks** is missing, your Workspace has turned incoming webhooks off. Everything else still works, just without alerts.
-3. **Optional:** set `DASHBOARD_URL` in `wrangler.toml` to the dashboard address. Alerts then include an "Open price history" link.
-4. Deploy (merge to `main`), then open **Price history** once to start the 90-day backfill.
+3. **Telegram (optional).** See [Telegram alerts](#telegram-alerts) below.
+4. **Optional:** set `DASHBOARD_URL` in `wrangler.toml` to the dashboard address. Alerts then include an "Open price history" link.
+5. Deploy (merge to `main`), then open **Price history** or **Deviation history** once to start the 90-day backfill.
+
+### Telegram alerts
+
+Alerts can go to a Telegram channel (or group) as well as, or instead of, Google Chat. You need the Telegram app and about 10 minutes; nobody else has to approve anything.
+
+1. **Create the bot.** In Telegram, open a chat with **@BotFather** (the official one, with the blue tick), send `/newbot`, and follow the prompts: a display name (e.g. "THBT Price Alerts") and a username ending in `bot` (e.g. `thbt_price_alerts_bot`). BotFather replies with a **bot token** like `123456789:AAH…`. Keep it private: anyone with it can post as the bot.
+2. **Create the channel.** Tap ✏️ / **New Channel**, name it (e.g. "THBT Price Alerts"), and choose **Private** so only people you invite can join. (A **group** also works if the team wants to chat underneath the alerts: create a group and add the bot as a member instead.)
+3. **Add the bot as an administrator.** Open the channel → its name → **Administrators → Add Admin**, search for the bot's username, and keep only **Post messages** turned on. Bots can't post to channels unless they're admins.
+4. **Find the channel's chat ID.** Post any message in the channel (e.g. "hello"). Then, from the `shared-dashboard` folder:
+
+   ```
+   node scripts/telegram-setup.mjs <bot token>
+   ```
+
+   It lists the chats the bot can see. A private channel's ID looks like `-1001234567890`; copy it including the minus sign.
+5. **Send a test message:**
+
+   ```
+   node scripts/telegram-setup.mjs <bot token> <chat id>
+   ```
+
+   A test alert should appear in the channel. If Telegram says "not enough rights", check step 3.
+6. **Add two Worker secrets:** **`TELEGRAM_BOT_TOKEN`** (the bot token) and **`TELEGRAM_CHAT_ID`** (the chat ID). No redeploy is needed.
+7. Press **Send alert** on the Live rates page. The note under the button should say it was sent to Telegram.
+
+No Node? You can find the chat ID in a browser instead. After step 4's "hello", open `https://api.telegram.org/bot<bot token>/getUpdates` and look for `"chat":{"id":-100…`. Treat that address like the token itself.
+
+To invite colleagues, share the channel's invite link (channel → name → **Invite Links**). To stop Telegram alerts, delete the two secrets. To move them to another channel, add the bot there and change `TELEGRAM_CHAT_ID`.
 
 Supabase pauses free projects after about a week without activity. The Worker reads and writes every 6 hours, which should keep the project active.
 
@@ -161,7 +200,7 @@ Supabase pauses free projects after about a week without activity. The Worker re
 - **Adding or removing someone (emailed code):** change the Access policy in Zero Trust.
 - **Rotating a key:** update the secret in the Worker's settings. It takes effect within seconds.
 - **Changing pools or thresholds:** edit `PAIRS` or `DEVIATION_RED` / `DEVIATION_YELLOW` in `src/worker.js` and push to `main`. Keep `dashboard.html` in step if you change the rules. A new pair also needs adding to the `symbol` check on the Supabase table.
-- **Alerts stopped?** Check the Worker's **Logs** around a mark: each run logs a line starting with `scheduled capture`. To move alerts to another space, replace the `GOOGLE_CHAT_WEBHOOK_URL` secret.
+- **Alerts stopped?** Check the Worker's **Logs** around a mark: each run logs a line starting with `scheduled capture`. To move alerts to another space, replace the `GOOGLE_CHAT_WEBHOOK_URL` secret. If only one channel is failing, **Send alert** shows that channel's error.
 - **Local testing:** `npx wrangler dev --var ALLOW_UNAUTHENTICATED:true` with a `.dev.vars` file holding the two keys. Never set `ALLOW_UNAUTHENTICATED` on the deployed Worker.
 
 ## Limitations
