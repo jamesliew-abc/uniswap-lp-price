@@ -28,7 +28,7 @@ ALLOWED_EMAIL_DOMAIN = ""    # optional, e.g. "yourcompany.com"
 # then uncomment and paste the id it prints.
 [[kv_namespaces]]
 binding = "RATES_CACHE"
-id = "paste-the-namespace-id-here"
+id = "eb8a3ed8adc343c1bbf6141a5b4ca1c2"
 
 Secrets (never put these in this file):
 npx wrangler secret put GRAPH_API_KEY
