@@ -4,6 +4,8 @@ A separate, shareable version of `dashboard.html` for an internal audience. View
 
 The original `dashboard.html` on GitHub Pages is unchanged and still works with your own keys.
 
+**Setting it up in new accounts, or rebuilding it?** Start with [First-time setup](#first-time-setup-new-accounts-or-rebuilding-from-scratch).
+
 ## How it works
 
 ```mermaid
@@ -47,13 +49,95 @@ Personal links are the quickest. If the dashboard should only ever be seen by na
 | `scripts/new-link.mjs` | Creates a personal link (link mode) |
 | `wrangler.toml` | Worker configuration |
 
+## First-time setup (new accounts, or rebuilding from scratch)
+
+Use this checklist to set the dashboard up in new accounts, or to rebuild it after deleting the old one. It takes about an hour, mostly waiting for sign-ups. Each step links to the detailed section further down.
+
+Nothing needs carrying over from an old setup. The 90 days of price history are rebuilt from the Uniswap subgraph and the Bank Rates from the Bank of Thailand API the first time someone opens a history page.
+
+### What you need
+
+| Account / key | Where to get it | Used for |
+|---|---|---|
+| GitHub account with a copy of this repo | Fork `jamesliew-abc/uniswap-lp-price`, or push it to a new repo | Cloudflare deploys from it |
+| Cloudflare account (free) | dash.cloudflare.com | Hosting the dashboard, schedules, cache |
+| Supabase account (free) | supabase.com | Storing price and Bank Rate history |
+| The Graph API key | [The Graph Studio](https://thegraph.com/studio/apikeys/) → API Keys | Uniswap pool prices |
+| Bank of Thailand API token | The token you already use in the original dashboard works. For a new one, register on the Bank of Thailand's API portal (search "BOT API Portal") and subscribe to the exchange-rate statistics API. The dashboard calls `gateway.api.bot.or.th` | Bank Rates |
+| Google Chat space *(optional)* | A space you manage | Alerts |
+| Telegram bot and channel *(optional)* | @BotFather in Telegram | Alerts |
+
+### Steps
+
+1. **Supabase: create the database.**
+   1. In Supabase, create a new project (any name; a region near Thailand such as Singapore or Tokyo). Note the database password somewhere safe; the dashboard doesn't need it.
+   2. Open **SQL Editor → New query**, paste the contents of [`supabase/migrations/20261015000000_create_thbt_price_marks.sql`](supabase/migrations/20261015000000_create_thbt_price_marks.sql), and click **Run**. Do the same for [`supabase/migrations/20261015070000_create_thbt_bank_rates.sql`](supabase/migrations/20261015070000_create_thbt_bank_rates.sql). ("Success. No rows returned" is what you want.)
+   3. Under **Project Settings → API Keys**, note the **Project URL** (`https://<project-ref>.supabase.co`), then create a **Secret key** (`sb_secret_…`) and copy it.
+
+2. **Cloudflare: create the cache.** **Storage & Databases → Workers KV → Create**, name it `RATES_CACHE`, and copy its **ID**.
+
+3. **Edit `wrangler.toml`** in your copy of the repo and commit to `main`:
+
+   | Setting | Set it to |
+   |---|---|
+   | `name` | The Worker name you'll use in step 4. It's also the first part of the address, `https://<name>.<your-subdomain>.workers.dev` |
+   | `SUPABASE_URL` | The Project URL from step 1.3 |
+   | `id` under `[[kv_namespaces]]` | The KV ID from step 2 |
+   | `AUTH_MODE` | `"link"` for personal links (the default), or `"access"` for an emailed code ([4B](#4b-emailed-one-time-code-auth_mode--access)) |
+   | `DASHBOARD_URL` | Leave empty for now; fill it in at step 9 |
+
+4. **Cloudflare: deploy.** **Workers & Pages → Create → Import a repository**, connect GitHub if asked, pick your copy of the repo, set the **project name** to the same `name` as in `wrangler.toml`, and under **Advanced settings** set the **root directory** to `shared-dashboard`. Deploy. Every push to `main` redeploys it from now on.
+   - Cloudflare's free plan allows **5 scheduled jobs (cron triggers) per account**, and this Worker uses 3. If the account already has other scheduled Workers, the deploy fails with a cron limit error.
+
+5. **Add the secrets.** Worker → **Settings → Variables and Secrets → Add**, type **Secret** for each:
+
+   | Secret | Value | Needed? |
+   |---|---|---|
+   | `GRAPH_API_KEY` | The Graph API key | Yes |
+   | `BOT_API_TOKEN` | Bank of Thailand API token | Yes |
+   | `SUPABASE_SECRET_KEY` | Supabase secret key from step 1.3 | Yes |
+   | `VIEWER_LINKS` | One `name:token` line per person ([4A](#4a-personal-links-auth_mode--link-the-default)) | Link mode |
+   | `GOOGLE_CHAT_WEBHOOK_URL` | The space's webhook URL ([Setup](#setup-1)) | Optional |
+   | `TELEGRAM_BOT_TOKEN` | Bot token from @BotFather ([Telegram alerts](#telegram-alerts)) | Optional |
+   | `TELEGRAM_CHAT_ID` | The channel's ID, e.g. `-1001234567890` | Optional |
+
+   Use the **Secret** type, not **Text**: text variables are wiped by the next deploy, secrets aren't. Adding or changing a secret takes effect within seconds, with no redeploy.
+
+6. **Create your link** (link mode). Generate a token as in [4A](#4a-personal-links-auth_mode--link-the-default) (or use any 32 random letters and digits), add `YourName:<token>` to `VIEWER_LINKS`, and open `https://<name>.<your-subdomain>.workers.dev/?k=<token>`. The Worker's address is on its **Overview** page.
+
+7. **Load the history.** Open **Price history** or **Deviation history** once. It fills in the last 90 days of prices and Bank Rates by itself in about a minute, and the page updates when it's done.
+
+8. **Set up alerts** *(optional)*: Google Chat ([Setup](#setup-1), step 2) and/or Telegram ([Telegram alerts](#telegram-alerts)). Press **Send alert** on Live rates to check each channel receives it.
+
+9. **Finish:** put the dashboard address in `DASHBOARD_URL` in `wrangler.toml` (so alerts link back to it) and commit. Then send colleagues their links.
+
+**Check it worked**
+
+- [ ] Live rates shows all five pairs with a Bank Rate and deviation.
+- [ ] Price history and Deviation history show 7 days of captures with no "still missing" message.
+- [ ] **Send alert** reports "Sent to Google Chat and Telegram" (or whichever you set up).
+- [ ] The next 6-hour capture (09:00, 15:00, 21:00 or 03:00 Bangkok time) posts an alert, and the Worker's **Logs** show a `scheduled capture` line.
+
+### Removing the old setup
+
+Do this only once the new one works.
+
+- **Cloudflare:** delete the old Worker (**Settings → Delete**) and its `RATES_CACHE` KV namespace.
+- **Supabase:** delete the old project (**Project Settings → General → Delete project**), or pause it. Optionally download the tables first (**Table Editor → Export to CSV**). The new setup rebuilds the last 90 days by itself, so you'd only need that export for anything older.
+- **Telegram:** you can reuse the same bot and channel; just put the same two secrets in the new Worker. To retire the bot instead, send `/deletebot` to @BotFather. If the token was ever exposed, send `/revoke` for a new one.
+- **Google Chat:** reuse the same webhook URL, or remove it from the space (space name → **Apps & integrations** → the webhook → **Remove**).
+- **Links:** the new Worker has a new address, so everyone needs a new link. Old links stop working when the old Worker is deleted.
+- **Deviation alerts** start fresh in the new setup, so you may get one "now over 2%" alert for any pair that's already out of range.
+
 ## Setup
+
+The detailed steps behind the checklist above.
 
 ### 1. Deploy the Worker from this repo
 
 1. In the Cloudflare dashboard, go to **Workers & Pages → Create → Import a repository**.
-2. Pick `jamesliew-abc/uniswap-lp-price`, and under **Advanced settings** set the **root directory** to `shared-dashboard`.
-3. Deploy. The Worker is called `thbt-deviation-dashboard`, and every push to `main` redeploys it.
+2. Pick `jamesliew-abc/uniswap-lp-price` (or your copy), set the project name to match `name` in `wrangler.toml` (currently `uniswap-lp-price`), and under **Advanced settings** set the **root directory** to `shared-dashboard`.
+3. Deploy. Every push to `main` redeploys it.
 
 Prefer the command line? From this folder: `npx wrangler login`, then `npx wrangler deploy`.
 
@@ -77,7 +161,7 @@ Already set up: `wrangler.toml` points at the `RATES_CACHE` KV namespace.
 1. Create a link for each person or team. From this folder, with Node installed:
 
    ```
-   node scripts/new-link.mjs "Somchai (Treasury)" https://thbt-deviation-dashboard.<your-subdomain>.workers.dev
+   node scripts/new-link.mjs "Somchai (Treasury)" https://uniswap-lp-price.<your-subdomain>.workers.dev
    ```
 
    It prints a line such as `Somchai (Treasury):_qToF7SVCQt9ZlsHbS4tA6BOhIbII3dz` and the matching link. No Node? Any password generator works: use 32 random letters and digits as the token.
