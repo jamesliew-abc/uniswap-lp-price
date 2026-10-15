@@ -225,11 +225,11 @@ flowchart LR
 ```
 
 - **What's stored:** for each mark and pair, the pool price right after the last swap before that time. It uses the same formula as the Live rates page, applied to the swap's recorded price, so live captures and backfilled history match exactly.
-- **When:** cron triggers at 1 and 15 minutes past each mark (UTC 11:00, 17:00, 23:00, 05:00). Each run refreshes the stored Bank Rates first. The second run only does anything if the first couldn't capture the mark (for example, the subgraph was still catching up) or held back the 18:00 alert (below).
+- **When:** cron triggers at 1 and 15 minutes past each mark (UTC 11:00, 17:00, 23:00, 05:00). The first run refreshes the stored Bank Rates before capturing. The second run (which only re-fetches Bank Rates when it has work to do) only does anything if the first couldn't capture the mark (for example, the subgraph was still catching up) or held back the 18:00 alert (below).
 - **Backfill:** missing marks from the last 90 days are filled in automatically, up to 120 marks a run, by the cron and when someone opens the history page. The first visit fills the full 90 days in about a minute.
 - **Which Bank Rate a capture uses:** the rate is published around 18:00 Bangkok time on business days, so each 24-hour cycle starts with the 18:00 capture, and all four captures in it (18:00, 00:00, 06:00, 12:00) use that day's rate. Weekends and holidays use the last business day's rate.
 - **The 18:00 alert waits for the new rate.** On weekdays, if that day's Bank Rate isn't out yet at 18:01, the alert is held and sent by the 18:15 run (with the new rate if it has appeared by then; otherwise with the latest one). Each capture alert names the Bank Rate date it used.
-- **Live dashboard:** after 18:00 on weekdays it re-checks every 5 minutes (until 21:00) until the new rate appears, instead of waiting for its usual 3-hour refresh. Bank Rates are stored in Supabase (`thbt_bank_rates`) and kept up to date by the cron.
+- **Live dashboard:** after 18:00 on weekdays it re-checks every 15 minutes (until 21:00) until the new rate appears, instead of waiting for its usual 3-hour refresh. Bank Rates are stored in Supabase (`thbt_bank_rates`) and kept up to date by the cron.
 - **Alert:** when a mark is captured, the Worker posts the five prices to every alert channel that's set up (Google Chat and/or Telegram). Backfilled marks don't trigger alerts. Each pair is one line:
 
   ```

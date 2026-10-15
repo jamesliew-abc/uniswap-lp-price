@@ -384,15 +384,20 @@ export async function runScheduled(env, ctxShared, scheduledTime) {
   const meta = await poolMeta(env, pairs, subgraphId);
   const result = { mark: new Date(mark).toISOString(), captured: false, alerted: false, stillMissing: null };
 
-  // Bank Rates first, so the 18:00 capture can use the rate published that evening.
+  const have = await storedMarks(env, mark, mark, pairs[0].symbol);
+  const pendingKey = `capture-alert-pending:${mark}`;
+  const pending = have.has(mark) && env.RATES_CACHE ? await env.RATES_CACHE.get(pendingKey).catch(() => null) : null;
+
+  // Bank Rates first, so the 18:00 capture can use the rate published that evening. The retry run
+  // only re-fetches them if it has something to do, to keep calls to the Bank Rate API down.
   try {
-    result.bankRatesFetched = await ensureBankRates(env, ctxShared, mark - HISTORY_DAYS * DAY_MS, scheduledTime, { refreshRecent: true });
+    const refreshRecent = !isRetry || !have.has(mark) || !!pending;
+    result.bankRatesFetched = await ensureBankRates(env, ctxShared, mark - HISTORY_DAYS * DAY_MS, scheduledTime, { refreshRecent });
   } catch (err) {
     result.bankRatesError = err.message;
   }
 
   let rows = null;
-  const have = await storedMarks(env, mark, mark, pairs[0].symbol);
   if (!have.has(mark)) {
     if (meta.indexedTo < mark) {
       // The subgraph hasn't indexed up to the mark yet; the retry cron picks it up.
@@ -406,8 +411,6 @@ export async function runScheduled(env, ctxShared, scheduledTime) {
 
   // Alert for the mark: right after capturing it, or on the retry run if it was held back.
   if (alertChannels(env).length) {
-    const pendingKey = `capture-alert-pending:${mark}`;
-    const pending = !rows && env.RATES_CACHE ? await env.RATES_CACHE.get(pendingKey).catch(() => null) : null;
     if (rows || pending) {
       if (!rows) rows = await storedRowsAtMark(env, mark);
       const bank = await bankRatesAtMark(env, ctxShared, mark);
