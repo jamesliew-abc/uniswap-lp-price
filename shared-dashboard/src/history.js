@@ -175,15 +175,15 @@ function supabaseHeaders(env, extra = {}) {
   return headers;
 }
 
-function restUrl(env, query) {
-  return `${String(env.SUPABASE_URL).replace(/\/+$/, '')}/rest/v1/${TABLE}?${query}`;
+function restUrl(env, query, table = TABLE) {
+  return `${String(env.SUPABASE_URL).replace(/\/+$/, '')}/rest/v1/${table}?${query}`;
 }
 
-async function supabaseSelectAll(env, query) {
+async function supabaseSelectAll(env, query, table = TABLE) {
   const pageSize = 1000;
   const rows = [];
   for (let offset = 0; ; offset += pageSize) {
-    const res = await fetch(restUrl(env, `${query}&limit=${pageSize}&offset=${offset}`), { headers: supabaseHeaders(env) });
+    const res = await fetch(restUrl(env, `${query}&limit=${pageSize}&offset=${offset}`, table), { headers: supabaseHeaders(env) });
     if (!res.ok) throw new Error(`Supabase returned HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
     const page = await res.json();
     rows.push(...page);
@@ -205,6 +205,99 @@ async function upsertRows(env, rows, source) {
     body: JSON.stringify(rows.map(r => ({ ...r, source }))),
   });
   if (!res.ok) throw new Error(`Supabase insert failed (HTTP ${res.status}): ${(await res.text()).slice(0, 200)}`);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bank Rates (Bank of Thailand daily average mid rate), stored per business day
+// ---------------------------------------------------------------------------------------------
+const BANK_TABLE = 'thbt_bank_rates';
+const BANK_PUBLISH_UTC_HOUR = 11;           // published around 18:00 Bangkok time
+const BANK_LOOKBACK_DAYS = 10;              // a rate from before the first mark (long holidays)
+const BANK_CHUNK_DAYS = 31;
+
+const ictDateKey = ms => new Date(ms + 7 * 3600 * 1000).toISOString().slice(0, 10);
+
+// When a rate dated `dateKey` became available: 18:00 Bangkok time that day.
+export function bankRateAvailableAt(dateKey) {
+  return Date.parse(`${dateKey}T00:00:00Z`) + BANK_PUBLISH_UTC_HOUR * 3600 * 1000;
+}
+
+// The Bank Rate in effect at `ms`: the latest one already published. `list` is sorted oldest first.
+export function bankRateAt(list, ms) {
+  let found = null;
+  for (const r of list) {
+    if (bankRateAvailableAt(r.date) <= ms) found = r; else break;
+  }
+  return found;
+}
+
+async function storedBankRates(env, fromKey, toKey) {
+  const rows = await supabaseSelectAll(env,
+    `select=rate_date,currency,mid_rate&rate_date=gte.${fromKey}&rate_date=lte.${toKey}&order=rate_date`, BANK_TABLE);
+  const byCurrency = {};
+  rows.forEach(r => {
+    (byCurrency[r.currency] = byCurrency[r.currency] || []).push({ date: String(r.rate_date).slice(0, 10), rate: Number(r.mid_rate) });
+  });
+  return byCurrency;
+}
+
+async function bankCoverage(env, currency) {
+  const q = order => restUrl(env, `select=rate_date&currency=eq.${currency}&order=rate_date.${order}&limit=1`, BANK_TABLE);
+  const [first, last] = await Promise.all(['asc', 'desc'].map(async o => {
+    const res = await fetch(q(o), { headers: supabaseHeaders(env) });
+    if (!res.ok) throw new Error(`Supabase returned HTTP ${res.status}`);
+    const rows = await res.json();
+    return rows[0] ? String(rows[0].rate_date).slice(0, 10) : null;
+  }));
+  return { first, last };
+}
+
+// Fetches Bank Rates for [startKey, endKey] (in 31-day requests) and stores them.
+async function fetchAndStoreBankRates(env, ctxShared, startKey, endKey) {
+  const currencies = [...new Set(ctxShared.pairs.map(p => p.currency))];
+  const rows = [];
+  const failed = [];
+  for (let start = Date.parse(startKey); start <= Date.parse(endKey); start += BANK_CHUNK_DAYS * DAY_MS) {
+    const s = new Date(start).toISOString().slice(0, 10);
+    const e = new Date(Math.min(start + (BANK_CHUNK_DAYS - 1) * DAY_MS, Date.parse(endKey))).toISOString().slice(0, 10);
+    const results = await Promise.allSettled(currencies.map(c => ctxShared.fetchBankRange(c, s, e)));
+    results.forEach((r, i) => {
+      if (r.status === 'fulfilled') r.value.forEach(x => rows.push({ rate_date: x.date, currency: currencies[i], mid_rate: x.rate }));
+      else failed.push(`${currencies[i]} ${s}..${e} (${r.reason.message})`);
+    });
+  }
+  if (rows.length) {
+    const res = await fetch(restUrl(env, 'on_conflict=currency,rate_date', BANK_TABLE), {
+      method: 'POST',
+      headers: supabaseHeaders(env, { Prefer: 'resolution=merge-duplicates,return=minimal' }),
+      body: JSON.stringify(rows.map(r => ({ ...r, fetched_at: new Date().toISOString() }))),
+    });
+    if (!res.ok) throw new Error(`Supabase insert failed (HTTP ${res.status}): ${(await res.text()).slice(0, 200)}`);
+  }
+  if (failed.length) console.warn('Bank Rate fetch failed for', failed.join('; '));
+  return { stored: rows.length, failed };
+}
+
+// Makes sure stored Bank Rates cover `fromMs` (minus a lookback) up to today.
+// Returns true if it had to fetch anything.
+async function ensureBankRates(env, ctxShared, fromMs, now) {
+  const needFrom = ictDateKey(fromMs - BANK_LOOKBACK_DAYS * DAY_MS);
+  const today = ictDateKey(now);
+  const { first, last } = await bankCoverage(env, 'USD');
+  if (!first || first > ictDateKey(fromMs - (BANK_LOOKBACK_DAYS - 5) * DAY_MS)) {
+    await fetchAndStoreBankRates(env, ctxShared, needFrom, today);
+    return true;
+  }
+  // Recent rates: refresh the last 10 days if the newest stored one is more than a day old.
+  if (!last || last < ictDateKey(now - DAY_MS)) {
+    await fetchAndStoreBankRates(env, ctxShared, ictDateKey(now - BANK_LOOKBACK_DAYS * DAY_MS), today);
+    return true;
+  }
+  return false;
+}
+
+export function bankCoverageLooksShort(first, fromMs) {
+  return !first || first > ictDateKey(fromMs - (BANK_LOOKBACK_DAYS - 5) * DAY_MS);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -269,12 +362,19 @@ export async function runScheduled(env, ctxShared, scheduledTime) {
       const rows = await pricesAtMarks(env, [mark], pairs, subgraphId, meta);
       await upsertRows(env, rows, 'scheduled');
       result.captured = true;
-      if (env.GOOGLE_CHAT_WEBHOOK_URL) {
+      if (alertChannels(env).length) {
         const bot = ctxShared.getBotRates ? await ctxShared.getBotRates().catch(() => null) : null;
-        await sendChatAlert(env, mark, rows, bot, ctxShared);
-        result.alerted = true;
+        const sent = await sendCaptureAlert(env, mark, rows, bot, ctxShared);
+        result.alerted = sent.sent;
+        if (sent.failed.length) result.alertFailures = sent.failed;
       }
     }
+  }
+
+  try {
+    result.bankRatesFetched = await ensureBankRates(env, ctxShared, mark - HISTORY_DAYS * DAY_MS, scheduledTime);
+  } catch (err) {
+    result.bankRatesError = err.message;
   }
 
   result.stillMissing = await backfill(env, ctxShared, {
@@ -290,19 +390,29 @@ export function formatIct(ms) {
   }) + ' ICT';
 }
 
-// One line per pair, e.g. "THBT / USDC: Uniswap: 33.21, BoT Rate: 33.01, Deviation: +0.61%".
-// `items` = [{ symbol, price, botRate, deviation }]; missing values show as "n/a".
-export function formatAlertLine({ symbol, price, botRate, deviation }) {
+// One line per pair, e.g. "THBT / USDC: Uniswap: 33.21, Bank Rate: 33.01, Deviation: +0.61%".
+// `items` = [{ symbol, price, bankRate, deviation }]; missing values show as "n/a".
+// An optional `note` is added in brackets, e.g. "(now over 2%)".
+export function formatAlertLine({ symbol, price, bankRate, deviation, note }) {
   const num = v => (v === null || v === undefined || !isFinite(v) ? 'n/a' : Number(v).toFixed(2));
   const dev = deviation === null || deviation === undefined || !isFinite(deviation)
     ? 'n/a' : `${deviation > 0 ? '+' : ''}${deviation.toFixed(2)}%`;
-  return `THBT / ${symbol}: Uniswap: ${num(price)}, BoT Rate: ${num(botRate)}, Deviation: ${dev}`;
+  return `THBT / ${symbol}: Uniswap: ${num(price)}, Bank Rate: ${num(bankRate)}, Deviation: ${dev}${note ? ` (${note})` : ''}`;
 }
 
+// Google Chat: *bold* title and <url|label> link.
 export function buildChatMessage(title, items, dashboardUrl, linkPage = 'history.html', linkLabel = 'Open price history') {
   const parts = [`*${title}*`, ...items.map(formatAlertLine)];
   if (dashboardUrl) parts.push('', `<${dashboardUrl}/${linkPage}|${linkLabel}>`);
   return { text: parts.join('\n') };
+}
+
+// Telegram: HTML formatting (only <b> and <a>; everything else escaped).
+const escapeTg = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+export function buildTelegramMessage(title, items, dashboardUrl, linkPage = 'history.html', linkLabel = 'Open price history') {
+  const parts = [`<b>${escapeTg(title)}</b>`, ...items.map(i => escapeTg(formatAlertLine(i)))];
+  if (dashboardUrl) parts.push('', `<a href="${escapeTg(`${dashboardUrl}/${linkPage}`)}">${escapeTg(linkLabel)}</a>`);
+  return parts.join('\n');
 }
 
 export async function postToChat(env, message) {
@@ -315,22 +425,60 @@ export async function postToChat(env, message) {
   if (!res.ok) throw new Error(`Google Chat returned HTTP ${res.status}`);
 }
 
+export async function postToTelegram(env, html) {
+  if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) throw new Error('TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set on the Worker');
+  const res = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: String(env.TELEGRAM_CHAT_ID).trim(), text: html, parse_mode: 'HTML', disable_web_page_preview: true }),
+  });
+  if (!res.ok) {
+    let detail = '';
+    try { detail = (await res.json()).description || ''; } catch (e) { /* ignore */ }
+    throw new Error(`Telegram returned HTTP ${res.status}${detail ? `: ${detail}` : ''}`);
+  }
+}
+
+// Channels with their settings filled in.
+export function alertChannels(env) {
+  const out = [];
+  if (env.GOOGLE_CHAT_WEBHOOK_URL) out.push('Google Chat');
+  if (env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID) out.push('Telegram');
+  return out;
+}
+
+// Sends one alert to every configured channel. One channel failing doesn't stop the other.
+// Returns { sent: [channel names], failed: [{ channel, error }] }.
+export async function sendAlert(env, title, items, linkPage = 'history.html', linkLabel = 'Open price history') {
+  const url = dashboardUrlFrom(env);
+  const jobs = [];
+  if (env.GOOGLE_CHAT_WEBHOOK_URL) jobs.push(['Google Chat', () => postToChat(env, buildChatMessage(title, items, url, linkPage, linkLabel))]);
+  if (env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID) jobs.push(['Telegram', () => postToTelegram(env, buildTelegramMessage(title, items, url, linkPage, linkLabel))]);
+  const results = await Promise.allSettled(jobs.map(([, fn]) => fn()));
+  const sent = [], failed = [];
+  results.forEach((r, i) => {
+    if (r.status === 'fulfilled') sent.push(jobs[i][0]);
+    else failed.push({ channel: jobs[i][0], error: r.reason.message });
+  });
+  return { sent, failed };
+}
+
 export function dashboardUrlFrom(env) {
   return env.DASHBOARD_URL ? String(env.DASHBOARD_URL).replace(/\/+$/, '') : '';
 }
 
-async function sendChatAlert(env, mark, rows, bot, ctxShared) {
+async function sendCaptureAlert(env, mark, rows, bot, ctxShared) {
   const currencyBySymbol = Object.fromEntries(ctxShared.pairs.map(p => [p.symbol, p.currency]));
   const items = rows.map(r => {
     const b = bot && bot.rates && bot.rates[currencyBySymbol[r.symbol]];
     return {
       symbol: r.symbol,
       price: r.thbt_per_token,
-      botRate: b ? b.rate : null,
+      bankRate: b ? b.rate : null,
       deviation: b && r.thbt_per_token !== null ? ctxShared.deviationPct(r.thbt_per_token, b.rate) : null,
     };
   });
-  await postToChat(env, buildChatMessage(`THBT prices: 6-hour capture at ${formatIct(mark)}`, items, dashboardUrlFrom(env)));
+  return sendAlert(env, `THBT prices: 6-hour capture at ${formatIct(mark)}`, items);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -371,24 +519,40 @@ export async function handleHistory(env, ctx, ctxShared, url, now = Date.now()) 
   const settledBefore = now - LAZY_BACKFILL_MIN_AGE_MS;
   const missing = expected.filter(m => !got.has(m) && m <= settledBefore);
 
+  // Bank Rates for the range (plus a lookback for the first marks).
+  const bank = await storedBankRates(env, ictDateKey(fromMs - BANK_LOOKBACK_DAYS * DAY_MS), ictDateKey(toMs));
+  const bankShort = bankCoverageLooksShort((bank.USD || [])[0] && bank.USD[0].date, Math.max(fromMs, now - HISTORY_DAYS * DAY_MS));
+
   // Fill gaps in the background; the page polls until they're in.
   let backfilling = false;
-  if (missing.length) {
+  if (missing.length || bankShort) {
     backfilling = true;
-    const job = withBackfillLock(env, () => backfill(env, ctxShared, {
-      fromMs: Math.max(fromMs, now - HISTORY_DAYS * DAY_MS), untilMs: Math.min(toMs, settledBefore),
-    })).catch(err => console.error('history backfill failed', err));
+    const job = withBackfillLock(env, async () => {
+      await ensureBankRates(env, ctxShared, now - HISTORY_DAYS * DAY_MS, now);
+      if (missing.length) {
+        await backfill(env, ctxShared, {
+          fromMs: Math.max(fromMs, now - HISTORY_DAYS * DAY_MS), untilMs: Math.min(toMs, settledBefore),
+        });
+      }
+    }).catch(err => console.error('history backfill failed', err));
     if (ctx && ctx.waitUntil) ctx.waitUntil(job);
   }
 
+  const currencyBySymbol = Object.fromEntries(pairs.map(p => [p.symbol, p.currency]));
   const series = {};
   pairs.forEach(p => { series[p.symbol] = []; });
   rows.forEach(r => {
     if (!series[r.symbol]) return;
+    const t = Date.parse(r.mark_at);
+    const price = r.thbt_per_token === null ? null : Number(r.thbt_per_token);
+    const b = bankRateAt(bank[currencyBySymbol[r.symbol]] || [], t);
     series[r.symbol].push({
-      t: Date.parse(r.mark_at),
-      price: r.thbt_per_token === null ? null : Number(r.thbt_per_token),
+      t,
+      price,
       asOf: r.price_as_of ? Date.parse(r.price_as_of) : null,
+      bank: b ? b.rate : null,
+      bankDate: b ? b.date : null,
+      dev: b && price !== null ? ctxShared.deviationPct(price, b.rate) : null,
     });
   });
 
@@ -399,6 +563,7 @@ export async function handleHistory(env, ctx, ctxShared, url, now = Date.now()) 
       expectedMarks: expected.length,
       missingMarks: missing.length,
       backfilling,
+      thresholds: ctxShared.thresholds,
       pairs: pairs.map(p => ({ symbol: p.symbol, currency: p.currency })),
       series,
     },

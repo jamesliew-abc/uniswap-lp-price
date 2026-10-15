@@ -13,7 +13,7 @@
                 <span class="coin" aria-hidden="true">฿</span>
                 <div>
                     <h1>THBT Price Deviation Dashboard</h1>
-                    <p>Live Uniswap v4 pool prices on Base vs. the Bank of Thailand daily average rate</p>
+                    <p>Live Uniswap v4 pool prices on Base vs. the Bank Rate (Bank of Thailand daily average)</p>
                 </div>
             </div>
             <div class="viewer" id="viewer"></div>
@@ -22,6 +22,7 @@
         <nav class="tabs" aria-label="Pages">
             <a href="/" aria-current="page">Live rates</a>
             <a href="/history.html">Price history</a>
+            <a href="/deviation.html">Deviation history</a>
         </nav>
 
         <div class="toolbar">
@@ -38,7 +39,7 @@
                 </select>
             </div>
             <div class="alert-action">
-                <button id="alertBtn" type="button" class="secondary" title="Post the prices as of right now to the team's Google Chat space">Send to Google Chat</button>
+                <button id="alertBtn" type="button" class="secondary" title="Post the prices as of right now to the team's alert channels (Google Chat, Telegram)">Send alert</button>
                 <span class="alert-note" id="alertNote" role="status" aria-live="polite"></span>
             </div>
             <div class="spacer"></div>
@@ -57,7 +58,7 @@
                     <tr>
                         <th>Pair</th>
                         <th class="num">Uniswap rate<br>(THBT per 1 token)</th>
-                        <th class="num">BOT rate<br>(THB per 1 unit)</th>
+                        <th class="num">Bank Rate<br>(THB per 1 unit)</th>
                         <th class="num">Deviation</th>
                         <th>Status</th>
                         <th>Last swap</th>
@@ -71,9 +72,9 @@
 
         <div class="footnote">
             <ul>
-                <li><strong>Deviation</strong> = (Uniswap rate − BOT rate) ÷ BOT rate, treating 1 THBT as 1 THB. Positive means the pool gives more THBT per token than the BOT rate.</li>
-                <li><strong>Thresholds:</strong> red when the absolute deviation is more than 4%, yellow when it is more than 2%.</li>
-                <li><strong>BOT rate</strong> is the Daily Average Exchange Rate mid rate, published once per business day. On weekends and holidays the most recent published rate is used, and its date is shown under the rate. USDT and USDC are both compared against USD.</li>
+                <li><strong>Deviation</strong> = (Uniswap rate − Bank Rate) ÷ Bank Rate, treating 1 THBT as 1 THB. Positive means the pool gives more THBT per token than the Bank Rate.</li>
+                <li><strong>Thresholds:</strong> red when the absolute deviation is more than 4%, yellow when it is more than 2%. The team's alert channels get a message when a pair goes over 2% or 4%, and when it comes back within 2% (checked every 15 minutes).</li>
+                <li><strong>Bank Rate</strong> is the Bank of Thailand's Daily Average Exchange Rate mid rate, published once per business day. On weekends and holidays the most recent published rate is used, and its date is shown under the rate. USDT and USDC are both compared against USD.</li>
                 <li><strong>Uniswap rate</strong> is each pool's current price from the Uniswap v4 subgraph. Prices are shared by everyone viewing this page and are at most a few minutes old.</li>
             </ul>
         </div>
@@ -121,7 +122,7 @@
                 const poolLink = `https://app.uniswap.org/explore/pools/base/${encodeURIComponent(r.poolId)}`;
                 return `<tr class="${escapeHtml(r.state)}">
                     <td class="pair"><a href="${poolLink}" target="_blank" rel="noopener">THBT / ${escapeHtml(r.symbol)}</a>
-                        <span class="sub">vs BOT ${escapeHtml(r.currency)}</span></td>
+                        <span class="sub">vs ${escapeHtml(r.currency)} Bank Rate</span></td>
                     <td class="num">${formatRate(r.poolRate)}</td>
                     <td class="num">${formatRate(r.botRate)}<span class="sub">${r.botDate ? escapeHtml(formatBotDate(r.botDate)) : 'not available'}</span></td>
                     <td class="num dev">${devText}</td>
@@ -230,7 +231,7 @@
         $('intervalSelect').addEventListener('change', () => { storageSet(INTERVAL_KEY, $('intervalSelect').value); scheduleNext(); });
         $('refreshBtn').addEventListener('click', refresh);
 
-        // "Send to Google Chat": the Worker fetches prices right now, posts them, and returns them
+        // "Send alert": the Worker fetches prices right now, posts them to every alert channel, and returns them
         // so the table shows exactly what was sent. Nothing is saved to the price history.
         let alertCooldownTimer = null;
         function setAlertNote(text, isError = false) {
@@ -247,7 +248,7 @@
                 if (left <= 0) {
                     clearInterval(alertCooldownTimer);
                     $('alertBtn').disabled = false;
-                    $('alertBtn').textContent = 'Send to Google Chat';
+                    $('alertBtn').textContent = 'Send alert';
                 } else {
                     $('alertBtn').textContent = `Send again in ${left} s`;
                 }
@@ -264,7 +265,7 @@
             } catch (e) {
                 setAlertNote('Couldn’t reach the dashboard. Check your connection.', true);
                 $('alertBtn').disabled = false;
-                $('alertBtn').textContent = 'Send to Google Chat';
+                $('alertBtn').textContent = 'Send alert';
                 return;
             }
             if (res.ok) {
@@ -272,7 +273,9 @@
                 renderSummary(body.rows);
                 $('lastUpdated').textContent = formatDateTime(body.poolsFetchedAt);
                 showStatus(body.warnings || []);
-                setAlertNote(`Sent at ${formatDateTime(body.sentAt)}`);
+                const to = (body.sent || []).join(' and ');
+                const partial = (body.failed || []).map(f => `${f.channel} failed (${f.error})`).join('; ');
+                setAlertNote(`Sent${to ? ` to ${to}` : ''} at ${formatDateTime(body.sentAt)}${partial ? `. ${partial}` : ''}`, !!partial);
                 startAlertCooldown(60);
                 return;
             }
@@ -287,7 +290,7 @@
                 setAlertNote(`Not sent: ${body.error || `server returned HTTP ${res.status}`}`, true);
             }
             $('alertBtn').disabled = false;
-            $('alertBtn').textContent = 'Send to Google Chat';
+            $('alertBtn').textContent = 'Send alert';
         });
 
         refresh();

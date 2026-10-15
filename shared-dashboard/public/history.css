@@ -1,0 +1,79 @@
+/* Shared by the Price history and Deviation history pages. */
+.viz-root {
+    --series-1: #eb6834;      /* validated categorical slot (orange); one series per chart */
+    --grid: #efe6df;
+    --axis-ink: #6b6f7b;
+}
+
+/* Range selector: segmented presets + custom dates, one row above the charts */
+.range { display: inline-flex; background: #fff; border: 1px solid var(--peach-2); border-radius: 12px; padding: 3px; gap: 2px; }
+.range button {
+    background: transparent; color: var(--muted); font-weight: 600;
+    padding: 7px 14px; border-radius: 9px; box-shadow: none;
+}
+.range button:hover:not(:disabled) { transform: none; box-shadow: none; color: var(--ink); background: var(--surface-2); }
+.range button[aria-pressed="true"] { background: linear-gradient(135deg, var(--brand-strong) 0%, var(--brand-deep) 100%); color: #fff; }
+.custom { display: none; flex-wrap: wrap; align-items: end; gap: 10px 12px; }
+.custom.open { display: flex; }
+.custom .field { display: grid; gap: 4px; }
+.custom .hint { font-size: 12px; color: var(--muted); align-self: center; }
+.range-error { color: #8a1c1c; font-size: 13px; width: 100%; }
+.range-error:empty { display: none; }
+
+.stage { padding: 20px 30px 6px; transition: opacity 0.2s; }
+.stage.loading { opacity: 0.55; }
+.schedule-note { font-size: 13px; color: var(--muted); margin-bottom: 14px; }
+
+/* Small multiples: one chart per pair (each pair has its own price scale) */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 460px), 1fr)); gap: 16px; }
+.card {
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 16px 16px 8px;
+    background: #fff;
+    min-width: 0;
+}
+.card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.card h2 { font-size: 15px; font-weight: 700; }
+.card h2 .sub { font-weight: 400; color: var(--muted); font-size: 13px; margin-left: 6px; }
+.latest { text-align: right; }
+.latest .value { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.latest .change { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.chart { position: relative; margin-top: 8px; height: 190px; outline: none; border-radius: 8px; }
+.chart:focus-visible { box-shadow: 0 0 0 3px rgba(242, 106, 27, 0.35); }
+.chart svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.chart .no-data { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 13px; }
+
+.tooltip {
+    position: absolute; top: 0; pointer-events: none;
+    background: #fff; border: 1px solid var(--line); border-radius: 10px;
+    box-shadow: 0 6px 18px rgba(80, 40, 10, 0.12);
+    padding: 8px 10px; font-size: 12px; white-space: nowrap; z-index: 2;
+    display: none;
+}
+.tooltip .tv { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ink); }
+.tooltip .key { width: 12px; height: 2px; border-radius: 2px; background: var(--series-1); }
+.tooltip .tt, .tooltip .ta { color: var(--muted); margin-top: 2px; }
+
+.table-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 22px 30px 0; }
+.table-head h2 { font-size: 16px; }
+.history-table { min-width: 640px; }
+.history-table td, .history-table th { padding: 10px 14px; }
+.history-table td.gap { color: var(--muted); }
+
+@media (max-width: 600px) {
+    .stage, .table-head { padding-left: 16px; padding-right: 16px; }
+    .chart { height: 170px; }
+}
+
+/* Deviation history */
+.status-row { display: flex; align-items: center; gap: 8px; justify-content: flex-end; margin-top: 2px; }
+.card .meta-line { font-size: 12px; color: var(--muted); margin-top: 6px; font-variant-numeric: tabular-nums; }
+.history-table td.warn { background: var(--warn-bg); color: var(--warn-ink); font-weight: 700; }
+.history-table td.crit { background: var(--crit-bg); color: var(--crit-ink); font-weight: 700; }
+.table-legend { font-size: 12px; color: var(--muted); padding: 6px 30px 0; display: flex; gap: 14px; flex-wrap: wrap; }
+.table-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.table-legend i { width: 14px; height: 10px; border-radius: 3px; display: inline-block; }
+.table-legend i.warn { background: var(--warn-bg); border: 1px solid var(--warn-dot); }
+.table-legend i.crit { background: var(--crit-bg); border: 1px solid var(--crit-dot); }
+@media (max-width: 600px) { .table-legend { padding-left: 16px; padding-right: 16px; } }

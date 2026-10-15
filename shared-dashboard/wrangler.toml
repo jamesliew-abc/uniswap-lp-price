@@ -33,12 +33,17 @@ ALLOWED_EMAIL_DOMAIN = ""    # optional, e.g. "yourcompany.com"
 SUPABASE_URL = "https://terfvnsyvtccujglklrq.supabase.co"
 # Optional: the dashboard's address, used for the "Open price history" link in alerts.
 DASHBOARD_URL = ""           # e.g. "https://uniswap-lp-price.<your-subdomain>.workers.dev"
+# Alerts when a pair goes over 2% / 4% or comes back within 2%, checked every 15 minutes.
+DEVIATION_ALERTS = "on"      # "off" to pause
 
 # Capture each 6-hour mark (09:00, 15:00, 21:00, 03:00 ICT = 02:00, 08:00, 14:00, 20:00 UTC).
 # The first run is a minute after the mark; the second only acts if the first couldn't capture
 # it (for example, the subgraph hadn't indexed up to the mark yet). Cron times are UTC.
+#
+# Every 15 minutes: check live deviations and alert when a pair goes over 2% or 4%, or comes
+# back within 2% (README, "Deviation alerts"). Set DEVIATION_ALERTS = "off" to pause it.
 [triggers]
-crons = ["1 2,8,14,20 * * *", "15 2,8,14,20 * * *"]
+crons = ["1 2,8,14,20 * * *", "15 2,8,14,20 * * *", "*/15 * * * *"]
 
 # Shared cache across Cloudflare locations.
 [[kv_namespaces]]
@@ -52,3 +57,5 @@ id = "eb8a3ed8adc343c1bbf6141a5b4ca1c2"
 #   VIEWER_LINKS   (link mode) one "name:token" per line
 #   SUPABASE_SECRET_KEY       price history storage
 #   GOOGLE_CHAT_WEBHOOK_URL   optional, alerts at each 6-hour capture
+#   TELEGRAM_BOT_TOKEN        optional, Telegram alerts (from @BotFather)
+#   TELEGRAM_CHAT_ID          optional, the channel or group to post to

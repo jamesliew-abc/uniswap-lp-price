@@ -100,6 +100,7 @@ body {
     text-decoration: none;
     font-weight: 600;
     font-size: 15px;
+    white-space: nowrap;
 }
 .tabs a:hover { color: var(--ink); }
 .tabs a[aria-current="page"] { color: var(--brand-deep); }
@@ -249,6 +250,8 @@ tr.warn .dev { color: var(--warn-ink); font-weight: 700; }
     .container { border-radius: 0; }
     .header, .tabs, .toolbar, .summary, .table-wrap, .footnote { padding-left: 16px; padding-right: 16px; }
     .header h1 { font-size: 1.25em; }
+    .tabs { gap: 18px; overflow-x: auto; scrollbar-width: none; }
+    .tabs a { font-size: 14px; }
     .status-msg { margin-left: 16px; margin-right: 16px; }
 }
 @media (prefers-reduced-motion: reduce) {
