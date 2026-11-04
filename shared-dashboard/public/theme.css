@@ -190,7 +190,9 @@ select, input[type="text"], input[type="date"] {
 
 /* Tables */
 .table-wrap { overflow-x: auto; padding: 20px 30px 10px; }
-table { width: 100%; border-collapse: collapse; min-width: 760px; }
+table { width: 100%; border-collapse: collapse; min-width: 900px; }
+td.rebalance { white-space: nowrap; font-weight: 600; }
+td.rebalance .sub { font-weight: 400; }
 th {
     text-align: left;
     font-size: 12px;

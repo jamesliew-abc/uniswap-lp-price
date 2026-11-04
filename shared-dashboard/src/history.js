@@ -280,7 +280,7 @@ async function fetchAndStoreBankRates(env, ctxShared, startKey, endKey) {
     const res = await fetch(restUrl(env, 'on_conflict=currency,rate_date', BANK_TABLE), {
       method: 'POST',
       headers: supabaseHeaders(env, { Prefer: 'resolution=merge-duplicates,return=minimal' }),
-      body: JSON.stringify(rows.map(r => ({ ...r, fetched_at: new Date().toISOString() }))),
+      body: JSON.stringify(rows.map(r => ({ ...r, fetched_at: new Date(Date.now()).toISOString() }))),
     });
     if (!res.ok) throw new Error(`Supabase insert failed (HTTP ${res.status}): ${(await res.text()).slice(0, 200)}`);
   }

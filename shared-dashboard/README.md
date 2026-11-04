@@ -204,6 +204,21 @@ If your company's email filter holds the code emails, ask IT to allow mail from 
 - **Links:** open your own link in a private window and confirm you see live rates. Then change one character of the token and confirm you get "This link isn't valid".
 - **Emailed code:** open the `workers.dev` URL in a private window, enter your work email, and confirm the code arrives and the dashboard loads. Then try a personal address and confirm Access blocks it.
 
+## Rebalance column (Live rates)
+
+For each pair, **Rebalance** shows the single swap in that pool that would move its rate to the Bank Rate right now:
+
+- **Buy X token** (paying ≈ Y THBT) when the pool rate is below the Bank Rate. For example, THBT/USDC at 32.9613 against a Bank Rate of 33.7223 means buying USDC with THBT until the rate reaches 33.7223.
+- **Sell X token** (receiving ≈ Y THBT) when the pool rate is above it.
+
+How it's worked out (`src/rebalance.js`):
+
+- Uniswap v4 pools use concentrated liquidity, so the Worker reads each pool's current price, active liquidity, fee and every liquidity range edge (initialised ticks) from the subgraph. It then walks from the current price to the Bank Rate one range at a time, adding up the tokens swapped in each.
+- The pool's swap fee is added to the amount paid in. Pools with a dynamic fee show "dynamic fee not included".
+- If there isn't enough liquidity to reach the Bank Rate, it shows the amount that uses up all the liquidity on that side, marked with **+** and "not enough liquidity to reach it".
+- It's an estimate for one swap made now: trades by others first, or a pool hook (flagged in the tooltip), would change the real amount.
+- It was checked against an independent swap simulation: swapping the computed amount lands exactly on the target price.
+
 ## Price history, deviation history and alerts
 
 **Bank Rate** throughout the dashboard means the Bank of Thailand's Daily Average Exchange Rate mid rate.
