@@ -206,15 +206,15 @@ If your company's email filter holds the code emails, ask IT to allow mail from 
 
 ## Rebalance column (Live rates)
 
-For each pair, **Rebalance** shows the single swap in that pool that would move its rate to the Bank Rate right now:
+For each pair, **Rebalance** shows the single swap in that pool that would move its rate to the Bank Rate right now. It's worded around the swap UI, where you enter the amount of the token you pay with (the source field):
 
-- **Buy X token** (paying ≈ Y THBT) when the pool rate is below the Bank Rate. For example, THBT/USDC at 32.9613 against a Bank Rate of 33.7223 means buying USDC with THBT until the rate reaches 33.7223.
-- **Sell X token** (receiving ≈ Y THBT) when the pool rate is above it.
+- **Sell X THBT** (≈ Y token out) when the pool rate is below the Bank Rate. For example, THBT/USDC at 32.9613 against a Bank Rate of 33.7223 means selling THBT for USDC until the rate reaches 33.7223.
+- **Buy THBT with X token** (≈ Y THBT out) when the pool rate is above it.
 
 How it's worked out (`src/rebalance.js`):
 
 - Uniswap v4 pools use concentrated liquidity, so the Worker reads each pool's current price, active liquidity, fee and every liquidity range edge (initialised ticks) from the subgraph. It then walks from the current price to the Bank Rate one range at a time, adding up the tokens swapped in each.
-- The pool's swap fee is added to the amount paid in. Pools with a dynamic fee show "dynamic fee not included".
+- The pool's swap fee is read from the pool and added to the amount paid in. With a 0% fee pool (as the THBT pools are set up), nothing is added and the label says "no pool fee". Pools with a dynamic fee show "dynamic fee not included".
 - If there isn't enough liquidity to reach the Bank Rate, it shows the amount that uses up all the liquidity on that side, marked with **+** and "not enough liquidity to reach it".
 - It's an estimate for one swap made now: trades by others first, or a pool hook (flagged in the tooltip), would change the real amount.
 - It was checked against an independent swap simulation: swapping the computed amount lands exactly on the target price.
