@@ -61,12 +61,13 @@
                         <th class="num">Uniswap rate<br>(THBT per 1 token)</th>
                         <th class="num">Bank Rate<br>(THB per 1 unit)</th>
                         <th class="num">Deviation</th>
+                        <th class="num">Rebalance<br>(to reach Bank Rate)</th>
                         <th>Status</th>
                         <th>Last swap</th>
                     </tr>
                 </thead>
                 <tbody id="rateBody">
-                    <tr><td colspan="6" class="empty">Loading the latest rates…</td></tr>
+                    <tr><td colspan="7" class="empty">Loading the latest rates…</td></tr>
                 </tbody>
             </table>
         </div>
@@ -74,6 +75,7 @@
         <div class="footnote">
             <ul>
                 <li><strong>Deviation</strong> = (Uniswap rate − Bank Rate) ÷ Bank Rate, treating 1 THBT as 1 THB. Positive means the pool gives more THBT per token than the Bank Rate.</li>
+                <li><strong>Rebalance</strong> is the single swap in that pool that would move its rate to the Bank Rate right now, worded as the amount to enter in the swap's source field: <em>Sell X THBT</em> (for the token) when the pool rate is below the Bank Rate, <em>Buy THBT with X token</em> when it's above. It's worked out from the pool's current liquidity ranges and includes the pool's swap fee, if any, on the amount paid in. It's an estimate: other trades before yours, or a pool hook, would change it. Hover over a value for details.</li>
                 <li><strong>Thresholds:</strong> red when the absolute deviation is more than 4%, yellow when it is more than 2%. The team's alert channels get a message when a pair goes over 2% or 4%, and when it comes back within 2% (checked every 15 minutes).</li>
                 <li><strong>Bank Rate</strong> is the official Daily Average Exchange Rate mid rate, published once per business day. On weekends and holidays the most recent published rate is used, and its date is shown under the rate. USDT and USDC are both compared against USD.</li>
                 <li><strong>Uniswap rate</strong> is each pool's current price from the Uniswap v4 subgraph. Prices are shared by everyone viewing this page and are at most a few minutes old.</li>
@@ -92,6 +94,40 @@
         function escapeHtml(s) {
             return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
         }
+        // Rebalance: the swap that would move the pool to the Bank Rate (see footnote).
+        function formatAmount(n, digits) {
+            if (digits === undefined) digits = n >= 1000 ? 0 : 2;
+            return n.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+        }
+        const formatToken = n => formatAmount(n, 2);
+        // Worded around the swap UI, where you type the amount of the token you're paying with:
+        // pool below the Bank Rate -> "Sell X THBT" (for the token); above -> "Buy THBT with X token".
+        // (rb.side is from the token's point of view: 'buy' = buy the token with THBT.)
+        function rebalanceCell(r) {
+            const rb = r.rebalance;
+            if (!rb) return '<td class="num rebalance">–</td>';
+            if (rb.side === 'none') return '<td class="num rebalance">–<span class="sub">At Bank Rate</span></td>';
+            const sym = escapeHtml(r.symbol);
+            const payThbt = rb.side === 'buy';                     // THBT is the source token
+            const plus = rb.reachable ? '' : '+';
+            const main = payThbt
+                ? `Sell ${formatToken(rb.thbtAmount)} THBT${plus}`
+                : `Buy THBT with ${formatToken(rb.tokenAmount)} ${sym}${plus}`;
+            const receive = payThbt ? `≈ ${formatToken(rb.tokenAmount)} ${r.symbol} out` : `≈ ${formatToken(rb.thbtAmount)} THBT out`;
+            const feePart = rb.dynamicFee ? 'dynamic fee not included' : rb.feePct === 0 ? 'no pool fee' : `incl. ${Number(rb.feePct.toFixed(4))}% fee`;
+            const sub = rb.reachable ? `${receive} · ${feePart}` : 'not enough liquidity to reach it';
+            const notes = [];
+            if (!rb.reachable) notes.push('That uses all the liquidity on that side of the pool and still doesn\u2019t reach the Bank Rate.');
+            if (rb.hasHook) notes.push('This pool has a hook, which may change the actual swap.');
+            const source = payThbt ? `${formatToken(rb.thbtAmount)} THBT` : `${formatToken(rb.tokenAmount)} ${r.symbol}`;
+            const dest = payThbt ? `${formatToken(rb.tokenAmount)} ${r.symbol}` : `${formatToken(rb.thbtAmount)} THBT`;
+            const title = escapeHtml([
+                `Swap ${source} (the amount to enter) for about ${dest} in this pool ${rb.reachable ? 'to bring its rate to the Bank Rate' : 'to move its rate toward the Bank Rate'}.`,
+                ...notes,
+            ].join(' '));
+            return `<td class="num rebalance" title="${title}">${main}<span class="sub">${escapeHtml(sub)}</span></td>`;
+        }
+
         function formatRate(n) {
             if (n === undefined || n === null || !isFinite(n)) return '–';
             return n.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
@@ -127,6 +163,7 @@
                     <td class="num">${formatRate(r.poolRate)}</td>
                     <td class="num">${formatRate(r.bankRate)}<span class="sub">${r.bankDate ? escapeHtml(formatBankDate(r.bankDate)) : 'not available'}</span></td>
                     <td class="num dev">${devText}</td>
+                    ${rebalanceCell(r)}
                     <td><span class="pill ${escapeHtml(r.state)}">${STATUS_LABEL[r.state] || 'No data'}</span></td>
                     <td>${escapeHtml(formatAgo(r.lastSwap, now))}</td>
                 </tr>`;

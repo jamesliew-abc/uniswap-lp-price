@@ -25,6 +25,7 @@
 
 import { handleHistory, runScheduled, sendAlert, alertChannels, formatIct } from './history.js';
 import { runDeviationCheck } from './deviation-alerts.js';
+import { computeRebalance } from './rebalance.js';
 
 // Must match the deviation-check cron in wrangler.toml.
 const DEVIATION_CHECK_CRON = '*/15 * * * *';
@@ -388,15 +389,24 @@ async function fetchPools(env) {
   const ids = PAIRS.flatMap(p => [p.poolId, p.fallbackId]);
   const swapQueries = ids.map((id, i) =>
     `s${i}: swaps(first: 1, orderBy: timestamp, orderDirection: desc, where: { pool: "${id}" }) { timestamp }`).join('\n');
+  // Initialised ticks (liquidity range edges) for the Rebalance column.
+  const tickQueries = ids.map((id, i) =>
+    `k${i}: ticks(first: 1000, orderBy: tickIdx, where: { pool: "${id}", liquidityGross_gt: 0 }) { tickIdx liquidityNet }`).join('\n');
   const query = `{
     pools(where: { id_in: ${JSON.stringify(ids)} }) {
       id
       token0Price
       token1Price
-      token0 { symbol }
-      token1 { symbol }
+      sqrtPrice
+      liquidity
+      tick
+      feeTier
+      hooks
+      token0 { symbol decimals }
+      token1 { symbol decimals }
     }
     ${swapQueries}
+    ${tickQueries}
   }`;
 
   const res = await fetch(`https://gateway.thegraph.com/api/${env.GRAPH_API_KEY}/subgraphs/id/${SUBGRAPH_ID}`, {
@@ -415,7 +425,18 @@ async function fetchPools(env) {
       token1Price: p.token1Price,
       token0Symbol: p.token0 && p.token0.symbol,
       token1Symbol: p.token1 && p.token1.symbol,
+      token0Decimals: p.token0 && p.token0.decimals,
+      token1Decimals: p.token1 && p.token1.decimals,
+      sqrtPrice: p.sqrtPrice,
+      liquidity: p.liquidity,
+      tick: p.tick,
+      feeTier: p.feeTier,
+      hooks: p.hooks,
     };
+  });
+  ids.forEach((id, i) => {
+    const pool = pools[id.toLowerCase()];
+    if (pool) pool.ticks = (result.data[`k${i}`] || []).map(t => ({ tickIdx: t.tickIdx, liquidityNet: t.liquidityNet }));
   });
   const lastSwap = {};
   ids.forEach((id, i) => {
@@ -469,7 +490,7 @@ export function latestBotRates(records) {
 
 async function fetchBotRates(env) {
   if (!env.BOT_API_TOKEN) throw new Error('the Bank Rate API token secret is not set on the Worker');
-  const now = new Date();
+  const now = new Date(Date.now());
   const endKey = bangkokDateKey(now);
   const startKey = bangkokDateKey(new Date(now.getTime() - BOT_LOOKBACK_DAYS * 86400000));
   const results = await Promise.allSettled(BOT_CURRENCIES.map(c => fetchBotCurrency(env, c, startKey, endKey)));
@@ -630,6 +651,7 @@ async function getRates(env, ctx, { fresh = false } = {}) {
       bankDate: b ? b.date : null,
       deviation: dev,
       state: classify(dev),
+      rebalance: pool && b ? computeRebalance(pool, pool.ticks || [], b.rate) : null,
       lastSwap: pools.lastSwap[id] || null,
     };
   });
