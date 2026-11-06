@@ -36,6 +36,27 @@ DASHBOARD_URL = ""           # e.g. "https://uniswap-lp-price.<your-subdomain>.w
 # Alerts when a pair goes over 2% / 4% or comes back within 2%, checked every 15 minutes.
 DEVIATION_ALERTS = "on"      # "off" to pause
 
+# "Recent trades" table: wallets that get an icon. One address per line (any letter case).
+# Arbitrage bots (robot icon):
+ARB_BOT_WALLETS = """
+0xB719f45dC7928F7e34Ca7DE7458c890080bad1Fc
+0xC2CD29f31EC645D6235535FCbd5b27aCBe2E9D46
+0x85e6D6B3F9F80E21ce223dD91aC3e0e15296c2Eb
+0x2d66015a47163a270363C9A9F9cdD75419377694
+0x5Aa331f3A4C5111E970535BFEAbc603f78677C5a
+"""
+# Internal operators who arbitrage by hand (staff badge icon):
+OPERATOR_WALLETS = """
+0xa49a972c674339f23f85c8d3881f264222b72442
+0x9055ebaaaf211c293383c46d3da2ef6aa62123a7
+0x33f7464351256a1f0974e51364cce25af68df7eb
+0x956f9c73ab05278c1a9c6762c3fef87bfbc17bd1
+0xf9279eaf85d57a5f67991ae0dcb9b7528583e82d
+0x0df214be853caE6f646c9929EAfF857cb3452EFd
+0x12b11b606a3e6e7d28e4106816858f00750d5a45
+0xb647BeCB7190FaD55B5c5D43aa8454c3AA5b6d0D
+"""
+
 # Capture each 6-hour mark, starting when the day's Bank Rate is published:
 # 18:00, 00:00, 06:00, 12:00 ICT = 11:00, 17:00, 23:00, 05:00 UTC. Cron times are UTC.
 # The first run is a minute after the mark (and refreshes the Bank Rates first). The second, 15

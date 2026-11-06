@@ -72,15 +72,46 @@
             </table>
         </div>
 
-        <div class="footnote">
+        <section class="trades" aria-labelledby="tradesTitle">
+            <div class="trades-head">
+                <h2 id="tradesTitle">Recent trades</h2>
+                <div class="legend">
+                    <span class="legend-item"><span class="wallet-tag bot" aria-hidden="true"></span>Arbitrage bot</span>
+                    <span class="legend-item"><span class="wallet-tag operator" aria-hidden="true"></span>Internal operator</span>
+                </div>
+            </div>
+            <div class="pool-tabs" id="poolTabs" role="tablist" aria-label="Pool"></div>
+            <div class="table-wrap trades-wrap" id="tradesPanel" role="tabpanel" aria-labelledby="tradesTitle">
+                <table class="trades-table">
+                    <thead>
+                        <tr>
+                            <th>Date / time (ICT)</th>
+                            <th>Type</th>
+                            <th class="num">THBT</th>
+                            <th class="num" id="tokenCol">Token</th>
+                            <th class="num">Price<br>(THBT per 1 token)</th>
+                            <th>Wallet</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tradesBody">
+                        <tr><td colspan="6" class="empty">Loading recent trades…</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <details class="footnote" id="notes">
+            <summary>How these numbers work</summary>
             <ul>
                 <li><strong>Deviation</strong> = (Uniswap rate − Bank Rate) ÷ Bank Rate, treating 1 THBT as 1 THB. Positive means the pool gives more THBT per token than the Bank Rate.</li>
                 <li><strong>Rebalance</strong> is the single swap in that pool that would move its rate to the Bank Rate right now, worded as the amount to enter in the swap's source field: <em>Sell X THBT</em> (for the token) when the pool rate is below the Bank Rate, <em>Buy THBT with X token</em> when it's above. It's worked out from the pool's current liquidity ranges and includes the pool's swap fee, if any, on the amount paid in. It's an estimate: other trades before yours, or a pool hook, would change it. Hover over a value for details.</li>
                 <li><strong>Thresholds:</strong> red when the absolute deviation is more than 4%, yellow when it is more than 2%. The team's alert channels get a message when a pair goes over 2% or 4%, and when it comes back within 2% (checked every 15 minutes).</li>
                 <li><strong>Bank Rate</strong> is the official Daily Average Exchange Rate mid rate, published once per business day. On weekends and holidays the most recent published rate is used, and its date is shown under the rate. USDT and USDC are both compared against USD.</li>
                 <li><strong>Uniswap rate</strong> is each pool's current price from the Uniswap v4 subgraph. Prices are shared by everyone viewing this page and are at most a few minutes old.</li>
+                <li><strong>Recent trades</strong> are the 10 latest swaps in each pair's current pool, newest first. <em>Buy</em> means the trader received THBT, <em>Sell</em> means they paid THBT. <strong>Price</strong> is the rate that trade got: THBT amount ÷ token amount. <strong>Wallet</strong> is the address that signed the transaction; click it to open it on BaseScan, or click the time to open the transaction.</li>
+                <li><strong>Refresh now</strong> fetches the latest prices and trades straight away, then pauses for 30 seconds. Auto-refresh uses the copy shared by everyone (at most 3 minutes old). A new trade can take from a few seconds to a minute or so to reach the subgraph.</li>
             </ul>
-        </div>
+        </details>
     </div>
 
     <script>
@@ -170,6 +201,95 @@
             }).join('');
         }
 
+        // ---- Recent trades -------------------------------------------------------------------
+        const POOL_TAB_KEY = 'shared_dashboard_trades_pool';
+        const WALLET_LABEL = { bot: 'Arbitrage bot', operator: 'Internal operator' };
+        const ICONS = {
+            bot: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 4v4"/><circle cx="12" cy="3.5" r="1"/><circle cx="9" cy="14" r="1.2" fill="currentColor" stroke="none"/><circle cx="15" cy="14" r="1.2" fill="currentColor" stroke="none"/><path d="M2 12.5v3M22 12.5v3"/></svg>',
+            operator: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M10 2h4v3h-4z"/><circle cx="12" cy="11" r="2.5"/><path d="M8 18c.6-1.8 2.1-2.8 4-2.8s3.4 1 4 2.8"/></svg>',
+        };
+        document.querySelectorAll('.wallet-tag.bot').forEach(el => { el.innerHTML = ICONS.bot; });
+        document.querySelectorAll('.wallet-tag.operator').forEach(el => { el.innerHTML = ICONS.operator; });
+
+        let lastRows = [];
+        let selectedPool = storageGet(POOL_TAB_KEY);
+
+        const shortAddress = a => a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '–';
+        function formatTradeTime(unixSeconds) {
+            return new Date(unixSeconds * 1000).toLocaleString('en-GB', {
+                timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short',
+                hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+            });
+        }
+
+        function renderPoolTabs() {
+            const symbols = lastRows.map(r => r.symbol);
+            if (!symbols.includes(selectedPool)) selectedPool = symbols[0];
+            $('poolTabs').innerHTML = lastRows.map(r => {
+                const on = r.symbol === selectedPool;
+                return `<button type="button" role="tab" class="pool-tab" id="poolTab-${escapeHtml(r.symbol)}" data-symbol="${escapeHtml(r.symbol)}"
+                    aria-selected="${on}" aria-controls="tradesPanel" tabindex="${on ? 0 : -1}">THBT / ${escapeHtml(r.symbol)}</button>`;
+            }).join('');
+            $('tradesPanel').setAttribute('aria-labelledby', `poolTab-${selectedPool}`);
+        }
+
+        function walletCell(t) {
+            if (!t.wallet) return '<td class="wallet">–</td>';
+            const tag = t.walletType
+                ? `<span class="wallet-tag ${escapeHtml(t.walletType)}" title="${WALLET_LABEL[t.walletType]}" role="img" aria-label="${WALLET_LABEL[t.walletType]}">${ICONS[t.walletType]}</span>`
+                : '<span class="wallet-tag none" aria-hidden="true"></span>';
+            return `<td class="wallet">${tag}<a class="addr" href="https://basescan.org/address/${encodeURIComponent(t.wallet)}" target="_blank" rel="noopener" title="${escapeHtml(t.wallet)}">${escapeHtml(shortAddress(t.wallet))}</a></td>`;
+        }
+
+        function renderTrades() {
+            const row = lastRows.find(r => r.symbol === selectedPool);
+            $('tokenCol').textContent = row ? row.symbol : 'Token';
+            const trades = row && row.trades ? row.trades : [];
+            if (!row) return;
+            if (!trades.length) {
+                $('tradesBody').innerHTML = '<tr><td colspan="6" class="empty">No trades found in this pool yet.</td></tr>';
+                return;
+            }
+            const now = Date.now();
+            $('tradesBody').innerHTML = trades.map(t => `<tr>
+                <td class="when"><a href="https://basescan.org/tx/${encodeURIComponent(t.tx)}" target="_blank" rel="noopener" title="Open the transaction on BaseScan">${escapeHtml(formatTradeTime(t.time))}</a>
+                    <span class="sub">${escapeHtml(formatAgo(t.time, now))}</span></td>
+                <td><span class="side ${t.type === 'buy' ? 'buy' : 'sell'}">${t.type === 'buy' ? 'Buy' : 'Sell'}</span></td>
+                <td class="num">${formatToken(t.thbtAmount)}</td>
+                <td class="num">${formatToken(t.tokenAmount)}</td>
+                <td class="num">${formatRate(t.price)}</td>
+                ${walletCell(t)}
+            </tr>`).join('');
+        }
+
+        function showTrades(rows) {
+            lastRows = rows || [];
+            renderPoolTabs();
+            renderTrades();
+        }
+
+        function selectPool(symbol, focus) {
+            selectedPool = symbol;
+            storageSet(POOL_TAB_KEY, symbol);
+            renderPoolTabs();
+            renderTrades();
+            if (focus) { const tab = $(`poolTab-${symbol}`); if (tab) tab.focus(); }
+        }
+        $('poolTabs').addEventListener('click', e => {
+            const tab = e.target.closest('.pool-tab');
+            if (tab) selectPool(tab.dataset.symbol, false);
+        });
+        $('poolTabs').addEventListener('keydown', e => {
+            const keys = { ArrowRight: 1, ArrowLeft: -1, Home: 'first', End: 'last' };
+            if (!(e.key in keys) || !lastRows.length) return;
+            e.preventDefault();
+            const i = lastRows.findIndex(r => r.symbol === selectedPool);
+            const n = lastRows.length;
+            const k = keys[e.key];
+            const next = k === 'first' ? 0 : k === 'last' ? n - 1 : (i + k + n) % n;
+            selectPool(lastRows[next].symbol, true);
+        });
+
         function renderSummary(rows) {
             const count = s => rows.filter(r => r.state === s).length;
             const chips = [['crit', `${count('crit')} over 4%`], ['warn', `${count('warn')} over 2%`], ['ok', `${count('ok')} within 2%`]];
@@ -188,11 +308,12 @@
             constructor(message, canSignIn) { super(message); this.canSignIn = canSignIn; }
         }
 
-        async function loadRates() {
+        async function loadRates(force) {
             let res;
             try {
                 // Access answers an expired session with a redirect to the sign-in page; don't follow it.
-                res = await fetch('/api/rates', { redirect: 'manual', cache: 'no-store', credentials: 'same-origin' });
+                // force: "Refresh now" asks the Worker for fresh pool data instead of the shared cache.
+                res = await fetch(force ? '/api/rates?fresh=1' : '/api/rates', { redirect: 'manual', cache: 'no-store', credentials: 'same-origin' });
             } catch (e) {
                 throw new Error('Network error. Check your connection.');
             }
@@ -211,15 +332,26 @@
         let timer = null;
         let nextRefreshAt = null;
 
-        async function refresh() {
+        // "Refresh now" fetches fresh data, then the button rests for 30 s (the Worker enforces the same gap).
+        const REFRESH_COOLDOWN_MS = 30 * 1000;
+        let refreshCooldownUntil = 0;
+        function updateRefreshBtn() {
+            const btn = $('refreshBtn');
+            const left = Math.ceil((refreshCooldownUntil - Date.now()) / 1000);
+            if (refreshing) { btn.disabled = true; btn.textContent = 'Refreshing…'; }
+            else if (left > 0) { btn.disabled = true; btn.textContent = `Refresh again in ${left} s`; }
+            else { btn.disabled = false; btn.textContent = 'Refresh now'; }
+        }
+
+        async function refresh({ force = false } = {}) {
             if (refreshing) return;
             refreshing = true;
-            $('refreshBtn').disabled = true;
-            $('refreshBtn').textContent = 'Refreshing…';
+            updateRefreshBtn();
             try {
-                const data = await loadRates();
+                const data = await loadRates(force);
                 renderRows(data.rows);
                 renderSummary(data.rows);
+                showTrades(data.rows);
                 $('lastUpdated').textContent = formatDateTime(data.poolsFetchedAt);
                 $('viewer').textContent = data.viewer ? `Signed in as ${data.viewer}` : '';
                 showStatus(data.warnings || []);
@@ -234,8 +366,7 @@
                 showStatus([`Couldn't load the latest rates: ${err.message} The table shows the last successful refresh.`]);
             } finally {
                 refreshing = false;
-                $('refreshBtn').disabled = false;
-                $('refreshBtn').textContent = 'Refresh now';
+                updateRefreshBtn();
             }
             scheduleNext();
         }
@@ -256,7 +387,7 @@
             const s = Math.max(0, Math.round((nextRefreshAt - Date.now()) / 1000));
             $('nextRefresh').textContent = `in ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
         }
-        setInterval(updateCountdown, 1000);
+        setInterval(() => { updateCountdown(); updateRefreshBtn(); }, 1000);
 
         // Browsers throttle timers in background tabs; catch up as soon as the tab is visible again.
         document.addEventListener('visibilitychange', () => {
@@ -267,7 +398,11 @@
         if (saved !== null && [...$('intervalSelect').options].some(o => o.value === saved)) $('intervalSelect').value = saved;
         else $('intervalSelect').value = '10';
         $('intervalSelect').addEventListener('change', () => { storageSet(INTERVAL_KEY, $('intervalSelect').value); scheduleNext(); });
-        $('refreshBtn').addEventListener('click', refresh);
+        $('refreshBtn').addEventListener('click', () => {
+            if (refreshing || Date.now() < refreshCooldownUntil) return;
+            refreshCooldownUntil = Date.now() + REFRESH_COOLDOWN_MS;
+            refresh({ force: true });
+        });
 
         // "Send alert": the Worker fetches prices right now, posts them to every alert channel, and returns them
         // so the table shows exactly what was sent. Nothing is saved to the price history.
@@ -309,6 +444,7 @@
             if (res.ok) {
                 renderRows(body.rows);
                 renderSummary(body.rows);
+                showTrades(body.rows);
                 $('lastUpdated').textContent = formatDateTime(body.poolsFetchedAt);
                 showStatus(body.warnings || []);
                 const to = (body.sent || []).join(' and ');

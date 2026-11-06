@@ -19,7 +19,7 @@ flowchart LR
 - **The Worker checks every request** before serving anything, and refuses everything until a sign-in mode is set up. There are two modes (set `AUTH_MODE` in `wrangler.toml`):
   - **`link` (default): personal links.** Each person or team gets their own link. You can turn any one off without affecting the others. No sign-in, no admin approval.
   - **`access`: emailed one-time code** through Cloudflare Access. Viewers type their work email and get a code. Only addresses you allow can get in.
-- **Shared cache:** pool prices are fetched at most every 3 minutes and Bank Rates every 3 hours, whatever the number of viewers. With 50 people watching, API usage is the same as for one.
+- **Shared cache:** pool prices are fetched at most every 3 minutes and Bank Rates every 3 hours, whatever the number of viewers. With 50 people watching, API usage is the same as for one. The exception is **Refresh now**, which fetches fresh pool data (see [Recent trades](#recent-trades-live-rates)).
 - **Same calculation as `dashboard.html`:** deviation thresholds (red > 4%, yellow > 2%), Bank Rate selection, pool fallback and THBT orientation are unchanged.
 
 ### Which mode to choose
@@ -218,6 +218,20 @@ How it's worked out (`src/rebalance.js`):
 - If there isn't enough liquidity to reach the Bank Rate, it shows the amount that uses up all the liquidity on that side, marked with **+** and "not enough liquidity to reach it".
 - It's an estimate for one swap made now: trades by others first, or a pool hook (flagged in the tooltip), would change the real amount.
 - It was checked against an independent swap simulation: swapping the computed amount lands exactly on the target price.
+
+## Recent trades (Live rates)
+
+Under the rates table, **Recent trades** shows the 10 latest swaps in each pair's current pool, one tab per pool: time (ICT, links to the transaction on BaseScan), Buy/Sell, THBT and token amounts, the price the trade got (THBT per 1 token) and the wallet that signed the transaction.
+
+- **Buy / Sell** is from the trader's side with THBT as the base token: Buy = received THBT, Sell = paid THBT. (The v4 subgraph stores amounts from the pool's side, so a negative THBT amount is a Buy.)
+- **Wallet icons:** a robot for the arbitrage bots in `ARB_BOT_WALLETS`, a staff badge for the internal operators in `OPERATOR_WALLETS` (both in `wrangler.toml`, one address per line, any letter case). Edit the list and redeploy to change them. The lists stay on the Worker; the page only gets each trade's tag.
+- **API cost:** none extra. The trades come in the same subgraph request as the prices (the `swaps` lookup that already gave "Last swap" now returns 10 rows instead of 1), and switching tabs doesn't fetch anything.
+
+**Refresh now** fetches the latest prices and trades straight away instead of using the 3-minute shared copy, then the button is paused for 30 seconds. The Worker enforces the same 30-second gap, so a scripted request can't fetch more often. Each click is one subgraph query: 10 viewers clicking 30 times a day is about 9,000 a month, against The Graph's free 100,000. Auto-refresh still uses the shared copy.
+
+Fresh pool data from a click is kept in the Worker's memory, but saved to the `RATES_CACHE` KV namespace only if the last save was 3 or more minutes ago. Workers KV's free plan allows 1,000 writes a day and the regular 3-minute refreshes use up to about half of that, so clicks don't add KV writes.
+
+New trades usually reach the subgraph within seconds of the block, occasionally a minute or more.
 
 ## Price history, deviation history and alerts
 
