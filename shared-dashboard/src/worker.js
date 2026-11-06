@@ -13,7 +13,8 @@
 // Until a mode is configured, the Worker refuses every request.
 //
 // Results are cached (pool prices for 3 minutes, Bank Rates for 3 hours) and shared by every
-// viewer, so API usage stays the same however many people have the page open.
+// viewer, so API usage stays the same however many people have the page open. "Refresh now"
+// (/api/rates?fresh=1) skips the pool cache, at most once every 30 seconds.
 //
 // Configuration (see shared-dashboard/README.md):
 //   Secrets:  GRAPH_API_KEY, BOT_API_TOKEN, VIEWER_LINKS (link mode)
@@ -37,6 +38,10 @@ const DEVIATION_RED = 4;     // percent
 const DEVIATION_YELLOW = 2;  // percent
 
 const POOL_TTL_MS = 3 * 60 * 1000;          // pool prices: refetch at most every 3 minutes
+const TRADES_PER_POOL = 10;                 // "Recent trades" table, per pool; fetched in the same request
+// "Refresh now" asks for fresh pool data. The page disables the button for 30 s after a click; this is the
+// same floor on the server, so a scripted request can't fetch more often than that either.
+const FORCED_REFRESH_MIN_GAP_MS = 30 * 1000;
 const BOT_TTL_MS = 3 * 60 * 60 * 1000;      // BOT publishes once per business day
 const BOT_LOOKBACK_DAYS = 14;               // covers long Thai public-holiday runs
 
@@ -98,7 +103,9 @@ export default {
     if (url.pathname === '/api/rates') {
       if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
       try {
-        const data = await getRates(env, ctx);
+        // ?fresh=1 is the "Refresh now" button; auto-refresh uses the shared cache.
+        const fresh = url.searchParams.get('fresh') === '1';
+        const data = await getRates(env, ctx, { fresh, freshFloorMs: fresh ? FORCED_REFRESH_MIN_GAP_MS : 0 });
         return json({ ...data, viewer: auth.email, authMode: authMode(env) });
       } catch (err) {
         return json({ error: err.message }, 502);
@@ -375,6 +382,17 @@ function cachePut(env, ctx, key, value, ttlSeconds) {
   if (ctx && ctx.waitUntil) ctx.waitUntil(write); else return write;
 }
 
+// Pool data: always kept in memory, but saved to KV at most once per POOL_TTL_MS per instance. KV's free
+// plan allows 1,000 writes a day; normal 3-minute refreshes use about half of that, so "Refresh now"
+// clicks show fresh data to whoever clicked without adding KV writes.
+let poolsKvWrittenAt = 0;
+function savePools(env, ctx, pools) {
+  memoryCache.set('pools', pools);
+  if (Date.now() - poolsKvWrittenAt < POOL_TTL_MS) return;
+  poolsKvWrittenAt = Date.now();
+  cachePut(env, ctx, 'pools', pools, 24 * 3600);
+}
+
 // Fetches fresh data at most once at a time per Worker instance.
 function once(key, fn) {
   if (!inFlight.has(key)) inFlight.set(key, fn().finally(() => inFlight.delete(key)));
@@ -387,8 +405,10 @@ function once(key, fn) {
 async function fetchPools(env) {
   if (!env.GRAPH_API_KEY) throw new Error('GRAPH_API_KEY secret is not set on the Worker');
   const ids = PAIRS.flatMap(p => [p.poolId, p.fallbackId]);
+  // Latest swaps per pool: the newest gives "Last swap", all of them fill the "Recent trades" table.
+  // Same request as the prices, so the trades table costs no extra Graph queries.
   const swapQueries = ids.map((id, i) =>
-    `s${i}: swaps(first: 1, orderBy: timestamp, orderDirection: desc, where: { pool: "${id}" }) { timestamp }`).join('\n');
+    `s${i}: swaps(first: ${TRADES_PER_POOL}, orderBy: timestamp, orderDirection: desc, where: { pool: "${id}" }) { id timestamp origin amount0 amount1 transaction { id } }`).join('\n');
   // Initialised ticks (liquidity range edges) for the Rebalance column.
   const tickQueries = ids.map((id, i) =>
     `k${i}: ticks(first: 1000, orderBy: tickIdx, where: { pool: "${id}", liquidityGross_gt: 0 }) { tickIdx liquidityNet }`).join('\n');
@@ -439,11 +459,48 @@ async function fetchPools(env) {
     if (pool) pool.ticks = (result.data[`k${i}`] || []).map(t => ({ tickIdx: t.tickIdx, liquidityNet: t.liquidityNet }));
   });
   const lastSwap = {};
+  const trades = {};
   ids.forEach((id, i) => {
-    const row = result.data[`s${i}`];
-    lastSwap[id.toLowerCase()] = row && row[0] ? parseInt(row[0].timestamp, 10) : null;
+    const rows = result.data[`s${i}`] || [];
+    lastSwap[id.toLowerCase()] = rows[0] ? parseInt(rows[0].timestamp, 10) : null;
+    trades[id.toLowerCase()] = rows.map(s => ({
+      id: s.id,
+      timestamp: parseInt(s.timestamp, 10),
+      origin: s.origin,
+      amount0: s.amount0,
+      amount1: s.amount1,
+      tx: s.transaction ? s.transaction.id : String(s.id).split('#')[0],
+    }));
   });
-  return { pools, lastSwap, fetchedAt: Date.now() };
+  return { pools, lastSwap, trades, fetchedAt: Date.now() };
+}
+
+// ARB_BOT_WALLETS / OPERATOR_WALLETS (wrangler.toml): addresses separated by commas, spaces or new lines.
+export function parseWallets(raw) {
+  return new Set(String(raw || '').split(/[\s,]+/).map(a => a.trim().toLowerCase()).filter(a => /^0x[0-9a-f]{40}$/.test(a)));
+}
+
+// Raw subgraph swaps -> rows for the "Recent trades" table, from the trader's side, THBT as the base token.
+// The v4 subgraph stores amounts from the pool's side (positive = paid into the pool), so a negative THBT
+// amount means THBT left the pool: the trader bought THBT.
+export function shapeTrades(rawTrades, pool, wallets) {
+  if (!pool || !Array.isArray(rawTrades)) return [];
+  const isToken0Thbt = String(pool.token0Symbol || '').toUpperCase() === 'THBT';
+  return rawTrades.map(t => {
+    const thbt = parseFloat(isToken0Thbt ? t.amount0 : t.amount1);
+    const token = parseFloat(isToken0Thbt ? t.amount1 : t.amount0);
+    const wallet = String(t.origin || '').toLowerCase();
+    return {
+      time: t.timestamp,
+      type: thbt < 0 ? 'buy' : 'sell',
+      thbtAmount: Math.abs(thbt),
+      tokenAmount: Math.abs(token),
+      price: token !== 0 && isFinite(thbt) ? Math.abs(thbt / token) : null,   // THBT per 1 token
+      wallet,
+      walletType: wallets.bots.has(wallet) ? 'bot' : wallets.operators.has(wallet) ? 'operator' : null,
+      tx: t.tx,
+    };
+  });
 }
 
 function bangkokDateKey(date) {
@@ -615,17 +672,19 @@ async function getBotRates(env, ctx, warnings = []) {
   return bot;
 }
 
-// `fresh: true` fetches pool prices now instead of using the shared 3-minute cache.
-async function getRates(env, ctx, { fresh = false } = {}) {
+// `fresh: true` fetches pool prices now instead of using the shared 3-minute cache, unless the data is
+// already newer than `freshFloorMs`.
+async function getRates(env, ctx, { fresh = false, freshFloorMs = 0 } = {}) {
   const warnings = [];
   const now = Date.now();
 
   // Pool prices
   let pools = await cacheGet(env, 'pools');
-  if (fresh || !pools || now - pools.fetchedAt > POOL_TTL_MS) {
+  const age = pools ? now - pools.fetchedAt : Infinity;
+  if ((fresh && age >= freshFloorMs) || age > POOL_TTL_MS) {
     try {
       pools = await once('pools', () => fetchPools(env));
-      cachePut(env, ctx, 'pools', pools, 24 * 3600);
+      savePools(env, ctx, pools);
     } catch (err) {
       if (!pools) throw new Error(`Couldn't load pool prices: ${err.message}`);
       warnings.push(`Couldn't refresh pool prices (${err.message}). Showing prices from ${new Date(pools.fetchedAt).toISOString()}.`);
@@ -634,6 +693,7 @@ async function getRates(env, ctx, { fresh = false } = {}) {
 
   // BOT rates
   const bot = await getBotRates(env, ctx, warnings);
+  const wallets = { bots: parseWallets(env.ARB_BOT_WALLETS), operators: parseWallets(env.OPERATOR_WALLETS) };
 
   const rows = PAIRS.map(p => {
     const id = pools.pools[p.poolId] ? p.poolId : p.fallbackId;
@@ -653,6 +713,7 @@ async function getRates(env, ctx, { fresh = false } = {}) {
       state: classify(dev),
       rebalance: pool && b ? computeRebalance(pool, pool.ticks || [], b.rate) : null,
       lastSwap: pools.lastSwap[id] || null,
+      trades: shapeTrades((pools.trades || {})[id], pool, wallets),
     };
   });
 
